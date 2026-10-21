@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DevLink</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">DevLink</div>
+    <nav id="nav">
+      <button data-view="devices" class="active">Devices</button>
+      <button data-view="clipboard">Clipboard</button>
+      <button data-view="files">Files</button>
+      <button data-view="ports">Ports</button>
+      <button data-view="shortcuts">Shortcuts</button>
+      <button data-view="settings">Settings</button>
+    </nav>
+    <div class="self">
+      <div class="label">This device</div>
+      <div id="self-name">…</div>
+      <div id="self-meta" class="muted small"></div>
+    </div>
+  </aside>
+
+  <main>
+    <section id="view-devices" class="view active">
+      <h1>Devices</h1>
+      <div id="peers"></div>
+      <div class="card">
+        <h2>Pair a new device</h2>
+        <p class="muted">On the first machine click <b>Allow pairing</b>. On the second machine press <b>Pair</b> next to it (or enter its address). Both screens then show the same 6 digit code – confirm it matches on both.</p>
+        <div class="row">
+          <button id="btn-allow" class="primary">Allow pairing for 2 minutes</button>
+          <span id="pairing-state" class="muted"></span>
+        </div>
+        <h3>Found on your network</h3>
+        <div id="discovered" class="list"></div>
+        <h3>Or enter an address</h3>
+        <form id="manual-pair" class="row">
+          <input id="pair-host" placeholder="192.168.1.20" autocomplete="off" />
+          <input id="pair-port" placeholder="port" size="6" value="47821" autocomplete="off" />
+          <button type="submit">Pair</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="view-clipboard" class="view">
+      <h1>Clipboard</h1>
+      <div class="card">
+        <label class="switch"><input type="checkbox" id="set-clipboardSync" /> Sync clipboard with paired devices</label>
+        <label class="switch"><input type="checkbox" id="set-clipboardImages" /> Include images</label>
+        <p class="muted small">Anything you copy is sent, encrypted, to every connected paired device. Turn this off before copying secrets, or use “Push clipboard” on a device for one-off sends.</p>
+      </div>
+      <h2>Recent activity</h2>
+      <div id="clip-log" class="list"></div>
+    </section>
+
+    <section id="view-files" class="view">
+      <h1>Files</h1>
+      <div id="drop" class="drop">Drop files or folders here to send</div>
+      <div class="row">
+        <label>Send to <select id="file-target"></select></label>
+        <button id="btn-send-files">Choose files…</button>
+        <button id="btn-send-folder">Choose folder…</button>
+        <button id="btn-open-downloads">Open received folder</button>
+      </div>
+      <div id="transfers" class="list"></div>
+    </section>
+
+    <section id="view-ports" class="view">
+      <h1>Port forwarding</h1>
+      <p class="muted">Reach a service on the other machine as <code>localhost</code> here – e.g. forward local 3000 to the other machine's dev server on 3000.</p>
+      <form id="fwd-form" class="card row">
+        <label>Device <select id="fwd-peer"></select></label>
+        <label>Local port <input id="fwd-local" size="6" /></label>
+        <label>Remote port <input id="fwd-remote" size="6" /></label>
+        <button type="submit" class="primary">Add forward</button>
+      </form>
+      <div id="forwards" class="list"></div>
+    </section>
+
+    <section id="view-shortcuts" class="view">
+      <h1>Shortcuts</h1>
+      <p class="muted">One-click terminal commands. They run on <b>this</b> machine only; nothing can trigger them remotely.</p>
+      <h3>Suggested</h3>
+      <div id="suggested" class="list"></div>
+      <h3>Yours</h3>
+      <form id="shortcut-form" class="card row">
+        <input id="sc-label" placeholder="Label (e.g. Build box)" />
+        <input id="sc-command" placeholder="Command (e.g. ssh me@192.168.1.20)" class="grow" />
+        <button type="submit">Save</button>
+      </form>
+      <div id="shortcuts" class="list"></div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <h1>Settings</h1>
+      <div class="card col">
+        <label>Device name <input id="set-deviceName" /></label>
+        <label class="switch"><input type="checkbox" id="set-acceptFiles" /> Accept files from paired devices</label>
+        <label class="switch"><input type="checkbox" id="set-allowForwarding" /> Allow paired devices to forward ports to this machine's localhost</label>
+        <div class="row"><span>Received files go to</span> <code id="set-downloads"></code> <button id="btn-downloads">Change…</button></div>
+        <label>Listen port <input id="set-listenPort" size="6" /> <span class="muted small">(restart to apply)</span></label>
+        <div class="muted small">Fingerprint <code id="self-fp"></code> – compare with the other machine to be sure you paired the right device.</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="dialog">
+      <h2>Pairing request</h2>
+      <p id="modal-text"></p>
+      <div id="modal-code" class="code"></div>
+      <p class="muted small">Only continue if this exact code is shown on the other device too.</p>
+      <div class="row end">
+        <button id="modal-no">Doesn't match</button>
+        <button id="modal-yes" class="primary">Codes match</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>
