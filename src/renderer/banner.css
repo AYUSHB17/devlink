@@ -1,0 +1,3 @@
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font: 600 13px -apple-system, "Segoe UI", sans-serif; }
+#b { position: absolute; inset: 4px; border-radius: 10px; background: rgba(209, 52, 75, .92); color: #fff;
+  display: flex; align-items: center; justify-content: center; padding: 0 14px; white-space: nowrap; }

@@ -386,9 +386,10 @@ fn main() {
         let was_capturing = std::mem::replace(&mut SHARED.lock().unwrap().capturing, false);
         if was_capturing {
             platform::set_capture(false);
-            emit(serde_json::json!({ "ev": "error", "msg": "DevLink stopped responding; mouse and keyboard released" }));
         }
         platform::inject(Cmd::ReleaseAll);
+        // a distinct event, so the app (once it catches up) leaves leading/following mode too
+        emit(serde_json::json!({ "ev": "released", "reason": "DevLink stopped responding for a moment; mouse and keyboard were released" }));
         *LAST_CMD.lock().unwrap() = None; // fire once until the app talks again
     });
     std::thread::spawn(|| {

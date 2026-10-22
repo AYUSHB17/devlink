@@ -52,6 +52,21 @@ export function sanitizeRelPath(rel: string): string {
   return parts.join(path.sep) || 'file';
 }
 
+/** Set asynchronously by a file-reject from the receiver (a function, so TypeScript doesn't narrow it away). */
+const failed = (t: Transfer) => t.state === 'error';
+
+/** Free bytes on the volume holding `dir` (or its nearest existing parent); null if unknown. */
+function freeBytes(dir: string): number | null {
+  let d = dir;
+  for (let i = 0; i < 64 && !fs.existsSync(d); i++) d = path.dirname(d);
+  try {
+    const st = fs.statfsSync(d);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch {
+    return null;
+  }
+}
+
 function uniquePath(p: string): string {
   if (!fs.existsSync(p)) return p;
   const ext = path.extname(p);
@@ -68,6 +83,10 @@ export class FileTransfers {
   private credit = new Map<string, { inflight: number; waiters: (() => void)[] }>();
   /** receiver side: bytes written to disk but not yet acknowledged, per peer */
   private unacked = new Map<string, number>();
+  /** receiver side: bytes received but not yet on disk, per peer (bounded, see onChunk) */
+  private pending = new Map<string, number>();
+  /** receiver side: batches already rejected, so the sender gets one reject per batch */
+  private rejected = new Set<string>();
 
   constructor(private core: Core) {
     core.onJson('file', (peerId, msg) => this.onMessage(peerId, msg));
@@ -77,6 +96,8 @@ export class FileTransfers {
       const c = this.credit.get(peerId);
       this.credit.delete(peerId);
       this.unacked.delete(peerId);
+      this.pending.delete(peerId);
+      for (const k of [...this.rejected]) if (k.startsWith(peerId + ':')) this.rejected.delete(k);
       for (const w of c?.waiters ?? []) w();
     });
   }
@@ -131,6 +152,8 @@ export class FileTransfers {
         if (skipped.n) t.name = `${root} (${skipped.n} unreadable skipped)`;
         this.touch(t);
         for (const f of files) {
+          // the receiver refused (e.g. receiving is off): stop instead of streaming the rest for nothing
+          if (failed(t)) throw new Error(t.error ?? 'rejected');
           const fid = this.fidCounter++;
           session.sendJSON({
             t: 'file-start',
@@ -146,6 +169,7 @@ export class FileTransfers {
           head.writeUInt32BE(fid, 0);
           for await (const chunk of fs.createReadStream(f.abs, { highWaterMark: CHUNK })) {
             if (session.closed) throw new Error('connection lost');
+            if (failed(t)) throw new Error(t.error ?? 'rejected');
             await this.waitForWindow(peerId, session);
             this.creditOf(peerId).inflight += (chunk as Buffer).length;
             await session.sendBin(BIN_FILE, Buffer.concat([head, chunk as Buffer]));
@@ -157,9 +181,11 @@ export class FileTransfers {
         }
         t.state = 'done';
       } catch (e: any) {
-        t.state = 'error';
-        t.error = e.message;
-        this.core.log(`send ${root}: ${e.message}`);
+        if (t.state !== 'error') {
+          t.state = 'error';
+          t.error = e.message;
+        }
+        this.core.log(`send ${root}: ${t.error}`);
       }
       this.touch(t);
     }
@@ -227,16 +253,27 @@ export class FileTransfers {
   private onMessage(peerId: string, msg: any): void {
     const key = (fid: number) => `${peerId}:${fid}`;
     if (msg.t === 'file-start') {
+      // batch ids key our maps; ours are 12 hex chars, so refuse anything else a peer might send
+      if (typeof msg.batch !== 'string' || !/^[0-9a-f]{1,64}$/.test(msg.batch)) return;
       const s = this.core.store.settings;
-      if (!s.acceptFiles) {
-        this.core.send(peerId, { t: 'file-reject', fid: msg.fid, reason: 'receiving is turned off on the other device' });
-        return;
-      }
+      const reject = (reason: string) => {
+        const k = `${peerId}:${msg.batch}`;
+        if (this.rejected.has(k)) return;
+        if (this.rejected.size >= 1000) this.rejected.delete(this.rejected.values().next().value!);
+        this.rejected.add(k);
+        this.core.send(peerId, { t: 'file-reject', fid: msg.fid, batch: msg.batch, reason });
+      };
+      if (!s.acceptFiles) return reject('receiving is turned off on the other device');
+      if (this.rejected.has(`${peerId}:${msg.batch}`)) return;
       if (typeof msg.name !== 'string' || !Number.isFinite(msg.size) || msg.size < 0 || this.incoming.has(key(msg.fid))) return;
       const root = path.resolve(s.downloadsDir, sanitizeRelPath(this.peerName(peerId)));
       const segs = sanitizeRelPath(msg.name).split(path.sep);
       const batchKey = `in-${peerId}-${msg.batch}`;
       let t = this.transfers.get(batchKey);
+      // don't let a peer fill the disk: the whole batch (and each file) must fit, with some room to spare
+      const free = freeBytes(root);
+      const need = t ? Number(msg.size) : Math.max(Number(msg.batchBytes) || 0, Number(msg.size));
+      if (free !== null && need > free - 256 * 1024 * 1024) return reject('not enough free disk space on the other device');
       if (!t) {
         // never overwrite: the top-level item gets a " (1)" suffix on conflict
         t = {
@@ -301,7 +338,8 @@ export class FileTransfers {
       c.inflight = Math.max(0, c.inflight - n);
       for (const w of c.waiters.splice(0)) w();
     } else if (msg.t === 'file-reject') {
-      for (const t of this.transfers.values()) if (t.dir === 'out' && t.peerId === peerId && t.state === 'active') {
+      const one = typeof msg.batch === 'string' ? this.transfers.get(`out-${msg.batch}`) : undefined;
+      for (const t of one ? [one] : this.transfers.values()) if (t.dir === 'out' && t.peerId === peerId && t.state === 'active') {
         t.state = 'error';
         t.error = String(msg.reason ?? 'rejected').slice(0, 200);
         this.touch(t);
@@ -313,16 +351,29 @@ export class FileTransfers {
   private onChunk(peerId: string, data: Buffer): void {
     if (data.length < 4) return;
     const body = data.subarray(4);
+    // A well-behaved sender never has more than WINDOW unacknowledged; one that ignores it is cut off
+    // rather than allowed to fill our memory.
+    const pending = (this.pending.get(peerId) ?? 0) + body.length;
+    if (pending > 2 * WINDOW) {
+      this.core.log('file sender ignored flow control; closing the connection');
+      this.core.sessions.get(peerId)?.close();
+      return;
+    }
+    this.pending.set(peerId, pending);
+    const done = () => {
+      this.pending.set(peerId, Math.max(0, (this.pending.get(peerId) ?? 0) - body.length));
+      this.ack(peerId, body.length);
+    };
     const inc = this.incoming.get(`${peerId}:${data.readUInt32BE(0)}`);
     // data for a file we refused or already failed still counts against the sender's window
-    if (!inc || inc.failed) return this.ack(peerId, body.length);
+    if (!inc || inc.failed) return done();
     inc.got += body.length;
     if (inc.got > inc.size) {
       inc.failed = 'received more data than announced';
-      return this.ack(peerId, body.length);
+      return done();
     }
     // acknowledge only once the bytes are on disk, so a slow disk throttles the sender
-    inc.ws.write(body, () => this.ack(peerId, body.length));
+    inc.ws.write(body, done);
     const t = this.transfers.get(inc.batch);
     if (t) {
       t.bytesDone += body.length;

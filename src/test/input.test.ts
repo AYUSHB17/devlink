@@ -159,6 +159,14 @@ describe('shared mouse & keyboard', () => {
     await waitFor(() => B.core.input.mode.mode === 'local', 'follower released too', 4000);
   });
 
+  test("the helper's watchdog release ends control on both sides", async () => {
+    A.helper.fire({ ev: 'edge', side: 'right', pos: 0.5, buttons: 0 });
+    await waitFor(() => B.core.input.mode.mode === 'following', 'follower');
+    A.helper.fire({ ev: 'released', reason: 'DevLink stopped responding' });
+    assert.equal(A.core.input.mode.mode, 'local');
+    await waitFor(() => B.core.input.mode.mode === 'local', 'follower released');
+  });
+
   test('refused when the other machine does not allow control', async () => {
     B.core.store.updateSettings({ allowRemoteInput: false });
     B.core.input.announce();

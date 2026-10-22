@@ -1,9 +1,11 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import * as path from 'path';
 import type { Core } from './core';
 import type { ScreenSide } from './store';
 
 const THICKNESS = 40;
+/** a strip never stays up longer than this, even if the drag's mouse-up was missed */
+const MAX_VISIBLE_MS = 15_000;
 
 /**
  * Slim always-on-top drop targets along the screen edges that face paired devices.
@@ -12,9 +14,21 @@ const THICKNESS = 40;
 export class EdgeStrips {
   private strips = new Map<ScreenSide, BrowserWindow>();
   private hideTimer?: NodeJS.Timeout;
+  private maxTimer?: NodeJS.Timeout;
+  /** strip webContents id -> the peer that strip sends to */
+  private peerOf = new Map<number, string>();
 
   constructor(private core: Core, private preload: string, private page: string) {
     core.input.on('drag', (active: boolean) => (active ? this.show() : this.scheduleHide()));
+    ipcMain.handle('strip:drop', (e, paths: unknown) => {
+      const peerId = this.peerOf.get(e.sender.id);
+      if (!peerId || !Array.isArray(paths)) return { ok: false, error: 'not a drop strip' };
+      const clean = paths.filter((p): p is string => typeof p === 'string' && p.length > 0).slice(0, 1000);
+      if (!clean.length) return { ok: false, error: 'nothing to send' };
+      void this.core.files.sendPaths(peerId, clean).catch((err) => this.core.log(`edge drop: ${err.message}`));
+      this.scheduleHide();
+      return { ok: true };
+    });
   }
 
   private targets(): { side: ScreenSide; peerId: string; name: string }[] {
@@ -26,7 +40,8 @@ export class EdgeStrips {
   }
 
   private bounds(side: ScreenSide): Electron.Rectangle {
-    const displays = screen.getAllDisplays().map((d) => d.bounds);
+    // work areas leave the Dock / taskbar / menu bar alone, so a drop meant for them isn't swallowed
+    const displays = screen.getAllDisplays().map((d) => d.workArea);
     const pick = (key: (b: Electron.Rectangle) => number, max: boolean) =>
       displays.reduce((a, b) => ((max ? key(b) > key(a) : key(b) < key(a)) ? b : a));
     switch (side) {
@@ -75,9 +90,12 @@ export class EdgeStrips {
       } else {
         w.setBounds(this.bounds(t.side));
       }
-      void w.loadFile(this.page, { query: { peer: t.peerId, name: t.name, side: t.side } });
+      this.peerOf.set(w.webContents.id, t.peerId);
+      void w.loadFile(this.page, { query: { name: t.name, side: t.side } });
       w.showInactive();
     }
+    if (this.maxTimer) clearTimeout(this.maxTimer);
+    this.maxTimer = setTimeout(() => this.scheduleHide(), MAX_VISIBLE_MS);
   }
 
   private scheduleHide(): void {

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ClipboardAdapter } from './clipboard';
 import { Core } from './core';
+import { ControlBanner } from './control-banner';
 import { EdgeStrips, stripPage } from './edge-strip';
 import { findHelper, HelperProcess } from './input-helper';
 import { SecretBox } from './store';
@@ -18,6 +19,7 @@ const smoke = process.argv.includes('--smoke');
 let win: BrowserWindow | null = null;
 let core: Core;
 let strips: EdgeStrips | null = null;
+let banner: ControlBanner | null = null;
 const preloadPath = path.join(__dirname, '..', 'preload', 'preload.js');
 const rendererDir = path.join(__dirname, '..', 'renderer');
 
@@ -197,7 +199,8 @@ app.whenReady().then(async () => {
     n.on('click', () => t.path && shell.showItemInFolder(t.path));
     n.show();
   });
-  strips = new EdgeStrips(core, preloadPath, stripPage(rendererDir));
+  strips = new EdgeStrips(core, path.join(__dirname, '..', 'preload', 'strip-preload.js'), stripPage(rendererDir));
+  banner = new ControlBanner(core, rendererDir);
   core.on('send-failed', (t: { name: string; peerName: string; error?: string }) => {
     if (Notification.isSupported()) new Notification({ title: `Couldn't send to ${t.peerName}`, body: `${t.name}: ${t.error ?? 'failed'}` }).show();
   });
@@ -242,6 +245,7 @@ app.on('second-instance', () => {
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   strips?.destroy();
+  banner?.destroy();
   void core?.stop();
 });
 app.on('activate', () => {

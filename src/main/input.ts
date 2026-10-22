@@ -20,6 +20,7 @@ export type HelperEvent =
   | { ev: 'wheel'; dx: number; dy: number }
   | { ev: 'key'; hid: number; down: boolean }
   | { ev: 'hotkey' }
+  | { ev: 'released'; reason: string }
   | { ev: 'local_activity' }
   | { ev: 'drag'; active: boolean }
   | { ev: 'error'; msg: string }
@@ -267,6 +268,16 @@ export class InputShare extends EventEmitter {
         if (this.m.mode === 'leading') {
           this.core.send(this.m.peer, { t: 'input-release' });
           this.release('released with hotkey', false);
+        }
+        break;
+      case 'released':
+        // the helper's watchdog already let go locally; bring the protocol state in line
+        if (this.m.mode === 'leading') {
+          this.core.send(this.m.peer, { t: 'input-release' });
+          this.release(String(e.reason ?? 'released').slice(0, 300), false);
+        } else if (this.m.mode === 'following') {
+          this.core.send(this.m.peer, { t: 'input-takeback' });
+          this.release(String(e.reason ?? 'released').slice(0, 300), true);
         }
         break;
       case 'local_activity':
