@@ -5,6 +5,8 @@ import { ClipboardAdapter, ClipboardSync } from './clipboard';
 import { Discovery, DiscoveredDevice } from './discovery';
 import { FileTransfers } from './files';
 import { PortForwards } from './forward';
+import { RemoteFs } from './remotefs';
+import { InputBackend, InputShare } from './input';
 import { fingerprint, handshake, HandshakeCtx, PeerHello, Session } from './protocol';
 import { SecretBox, Settings, Store } from './store';
 import { StatusReporter } from './status';
@@ -16,6 +18,8 @@ export interface CoreOptions {
   defaults?: Partial<Settings>;
   /** advertise / browse via mDNS */
   discovery?: boolean;
+  /** native input helper for shared mouse & keyboard (absent in tests) */
+  inputBackend?: InputBackend;
   log?: (msg: string) => void;
 }
 
@@ -36,6 +40,8 @@ export class Core extends EventEmitter {
   readonly files: FileTransfers;
   readonly forwards: PortForwards;
   readonly status: StatusReporter;
+  readonly input: InputShare;
+  readonly remotefs: RemoteFs;
   private discovery?: Discovery;
   private discovered = new Map<string, DiscoveredDevice>();
   private server?: net.Server;
@@ -60,6 +66,8 @@ export class Core extends EventEmitter {
     this.files = new FileTransfers(this);
     this.forwards = new PortForwards(this);
     this.status = new StatusReporter(this);
+    this.input = new InputShare(this, opts.inputBackend ?? null);
+    this.remotefs = new RemoteFs(this);
   }
 
   get id(): string {
@@ -139,6 +147,7 @@ export class Core extends EventEmitter {
     if (this.dialTimer) clearInterval(this.dialTimer);
     this.clipboard.stop();
     this.status.stop();
+    this.input.stop();
     this.forwards.stop();
     this.discovery?.stop();
     for (const s of [...this.sessions.values()]) s.close();
@@ -262,6 +271,8 @@ export class Core extends EventEmitter {
       }
       this.sessions.delete(peerId);
       old.close();
+      // the old session's close handler no longer sees itself in the map, so tell features here
+      for (const fn of this.downHandlers) fn(peerId);
     }
     this.sessions.set(peerId, session);
     const rec = this.store.getPeer(peerId);
@@ -359,6 +370,8 @@ export class Core extends EventEmitter {
       })),
       settings: s,
       forwards: this.forwards.snapshot(),
+      input: this.input.snapshot(),
+      remotefs: this.remotefs.snapshot(),
       transfers: this.files.snapshot(),
       clipboardLog: this.clipboard.log,
       shortcuts: this.store.shortcuts,

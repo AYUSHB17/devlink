@@ -12,9 +12,10 @@
     "start:b": "npm run build && DEVLINK_PROFILE=b DEVLINK_PORT=47822 electron .",
     "smoke": "npm run build && electron . --smoke",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist": "npm run build:native && npm run build && electron-builder",
+    "dist:mac": "npm run build:native && npm run build && electron-builder --mac",
+    "dist:win": "npm run build:native && npm run build && electron-builder --win",
+    "build:native": "cargo build --release --manifest-path native/devlink-input/Cargo.toml"
   },
   "build": {
     "appId": "in.optimist.devlink",
@@ -28,12 +29,24 @@
       "target": [
         "dmg",
         "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "native/devlink-input/target/release/devlink-input",
+          "to": "devlink-input"
+        }
       ]
     },
     "win": {
       "target": [
         "nsis",
         "portable"
+      ],
+      "extraResources": [
+        {
+          "from": "native/devlink-input/target/release/devlink-input.exe",
+          "to": "devlink-input.exe"
+        }
       ]
     },
     "nsis": {

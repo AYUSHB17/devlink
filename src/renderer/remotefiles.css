@@ -1,0 +1,7 @@
+#view-remotefiles h2 { margin: 0 0 6px; font-size: 15px; }
+#view-remotefiles .error { color: var(--bad); margin: 6px 0; }
+#view-remotefiles .error.small { font-size: 12px; margin: 0; }
+#view-remotefiles a.dirlink { color: var(--text); text-decoration: none; font-weight: 500; }
+#view-remotefiles a.dirlink:hover { color: var(--accent); }
+#view-remotefiles .list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+#view-remotefiles details { margin-top: 10px; }

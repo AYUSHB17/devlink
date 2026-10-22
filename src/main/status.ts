@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { isIPv4 } from 'net';
 import * as os from 'os';
 import type { Core } from './core';
 
@@ -40,6 +41,37 @@ function probe(cmd: string, args: string[]): Promise<string | null> {
   });
 }
 
+/** Usernames end up in a suggested `ssh user@ip` command, so only allow a shell-inert subset (and no leading "-"). */
+const SAFE_USERNAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+
+const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, '').slice(0, max) : '');
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/** Rebuilds a peer-supplied status object field by field, so nothing unexpected reaches the UI or a command line. */
+export function sanitizeStatus(raw: any): DeviceStatus {
+  const tools: Record<string, string | null> = {};
+  for (const [name] of TOOLS) {
+    const v = raw?.tools?.[name];
+    tools[name] = typeof v === 'string' ? str(v, 60) : null;
+  }
+  const ips = (Array.isArray(raw?.ips) ? raw.ips : []).filter((a: unknown): a is string => typeof a === 'string' && isIPv4(a)).slice(0, 16);
+  return {
+    hostname: str(raw?.hostname, 100),
+    username: typeof raw?.username === 'string' && SAFE_USERNAME.test(raw.username) ? raw.username : '',
+    platform: str(raw?.platform, 20),
+    release: str(raw?.release, 60),
+    arch: str(raw?.arch, 20),
+    uptime: num(raw?.uptime),
+    load1: num(raw?.load1),
+    cpus: num(raw?.cpus),
+    memTotal: num(raw?.memTotal),
+    memFree: num(raw?.memFree),
+    ips,
+    tools,
+    ts: num(raw?.ts),
+  };
+}
+
 /** Shares a small "how is my other machine doing" snapshot with every connected peer. */
 export class StatusReporter {
   private remote = new Map<string, DeviceStatus>();
@@ -50,7 +82,7 @@ export class StatusReporter {
   constructor(private core: Core) {
     core.onJson('status', (peerId, msg) => {
       if (msg.data && typeof msg.data === 'object') {
-        this.remote.set(peerId, msg.data);
+        this.remote.set(peerId, sanitizeStatus(msg.data));
         core.changed();
       }
     });

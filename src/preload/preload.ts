@@ -25,4 +25,18 @@ contextBridge.exposeInMainWorld('devlink', {
   removeShortcut: (id: string) => invoke('shortcut:remove', id),
   runCommand: (command: string) => invoke('shortcut:run', command),
   copy: (text: string) => invoke('copy', text),
+  setLayout: (peerId: string, side: string | null) => invoke('input:layout', peerId, side),
+  openPrivacy: (pane: string) => invoke('input:privacy', pane),
+  answerConsent: (ok: boolean) => invoke('input:consent', ok),
+  rfs: {
+    enable: (on: boolean) => invoke('rfs:enable', on),
+    share: (writable: boolean) => invoke('rfs:share', writable),
+    unshare: (id: string) => invoke('rfs:unshare', id),
+    setWritable: (id: string, on: boolean) => invoke('rfs:writable', id, on),
+    shares: (peerId: string) => invoke('rfs:shares', peerId),
+    list: (peerId: string, share: string, rel: string) => invoke('rfs:list', peerId, share, rel),
+    copy: (peerId: string, share: string, rel: string) => invoke('rfs:copy', peerId, share, rel),
+    edit: (peerId: string, share: string, rel: string) => invoke('rfs:edit', peerId, share, rel),
+    stopEdit: (id: string) => invoke('rfs:stopEdit', id),
+  },
 });

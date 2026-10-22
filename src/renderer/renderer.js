@@ -59,6 +59,8 @@ function render(s) {
   renderPorts(s);
   renderShortcuts(s);
   renderSettings(s);
+  renderScreens(s);
+  renderConsent(s);
   renderModal(s);
   $('pairing-state').textContent = s.pairing.enabled ? 'Pairing is on – this device can be paired for the next ' + Math.max(1, Math.round((s.pairing.until - Date.now()) / 1000)) + ' s' : '';
   $('btn-allow').textContent = s.pairing.enabled ? 'Stop allowing pairing' : 'Allow pairing for 2 minutes';
@@ -156,11 +158,17 @@ function renderPorts(s) {
 
 function renderShortcuts(s) {
   const run = (cmd) => call(api.runCommand(cmd));
-  const suggestions = s.peers.filter((p) => p.status && p.status.ips[0]).map((p) => `ssh ${p.status.username}@${p.status.ips[0]}`);
+  // The status comes from the other device, so re-check it before it becomes a terminal command.
+  const safeSsh = (p) => {
+    const st = p.status;
+    const ip = st && Array.isArray(st.ips) ? st.ips[0] : '';
+    const ok = typeof st?.username === 'string' && /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/.test(st.username) && typeof ip === 'string' && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
+    return ok ? `ssh ${st.username}@${ip}` : null;
+  };
+  const sshPeers = s.peers.map((p) => ({ p, cmd: safeSsh(p) })).filter((x) => x.cmd);
   $('suggested').replaceChildren(
-    ...(suggestions.length
-      ? s.peers.filter((p) => p.status && p.status.ips[0]).map((p) => {
-          const cmd = `ssh ${p.status.username}@${p.status.ips[0]}`;
+    ...(sshPeers.length
+      ? sshPeers.map(({ p, cmd }) => {
           return h('div', { class: 'item' },
             h('span', {}, `SSH into ${p.name}  `, h('code', {}, cmd)),
             h('span', { class: 'row' }, h('button', { onclick: () => run(cmd) }, 'Open terminal'), h('button', { onclick: () => call(api.copy(cmd), 'Copied') }, 'Copy')));
@@ -189,6 +197,59 @@ function renderSettings(s) {
   $('set-downloads').textContent = st.downloadsDir;
 }
 
+const SIDE_LABEL = { left: 'left of', right: 'right of', top: 'above', bottom: 'below' };
+function renderScreens(s) {
+  const inp = s.input;
+  const st = s.settings;
+  for (const k of ['inputSharing', 'allowRemoteInput', 'clipboardOnCross', 'edgeDrop', 'swapCmdCtrl', 'invertScroll']) setIfIdle('set-' + k, !!st[k], 'checked');
+  setIfIdle('set-pointerScale', String(st.pointerScale ?? 1));
+
+  const lines = [];
+  if (!st.inputSharing && !st.allowRemoteInput) lines.push(h('div', { class: 'muted' }, 'Shared mouse & keyboard is off. Turn on the options below on both machines.'));
+  else if (!inp.helper.running && inp.helper.error) lines.push(h('div', { class: 'bad' }, inp.helper.error));
+  else if (!inp.helper.running) lines.push(h('div', { class: 'muted' }, 'Arrange a connected device below to start.'));
+  if (inp.helper.platform === 'macos' && inp.helper.running && (!inp.helper.accessibility || !inp.helper.inputMonitoring))
+    lines.push(h('div', { class: 'row' },
+      h('span', { class: 'bad' }, 'macOS needs permission: ' + [!inp.helper.accessibility && 'Accessibility', !inp.helper.inputMonitoring && 'Input Monitoring'].filter(Boolean).join(' and ')),
+      !inp.helper.accessibility && h('button', { onclick: () => call(api.openPrivacy('accessibility')) }, 'Open Accessibility'),
+      !inp.helper.inputMonitoring && h('button', { onclick: () => call(api.openPrivacy('input')) }, 'Open Input Monitoring')),
+      h('div', { class: 'muted small' }, 'Add DevLink (or Terminal, if you started it with npm start), switch it on, then restart DevLink.'));
+  if (inp.mode === 'leading') lines.push(h('div', { class: 'ok' }, `Your mouse and keyboard are controlling ${inp.peer}.`));
+  if (inp.mode === 'following') lines.push(h('div', { class: 'ok' }, `${inp.peer} is controlling this machine.`));
+  const permsOk = inp.helper.platform !== 'macos' || (inp.helper.accessibility && inp.helper.inputMonitoring);
+  if (inp.helper.running && !inp.helper.error && permsOk && inp.mode === 'local') lines.push(h('div', { class: 'muted' }, 'Ready. Move the cursor off the shared edge to cross over.'));
+  if (inp.notice) lines.push(h('div', { class: 'muted small' }, inp.notice));
+  $('screen-status').replaceChildren(...lines);
+
+  $('layout').replaceChildren(
+    ...(s.peers.length
+      ? s.peers.map((p) => {
+          const side = st.inputLayout?.[p.id] || '';
+          const allows = inp.peerAllows[p.id];
+          const sugg = inp.layoutSuggestions && inp.layoutSuggestions[p.id];
+          const sel = h('select', { onchange: (e) => call(api.setLayout(p.id, e.target.value || null)) },
+            h('option', { value: '' }, 'not arranged'),
+            ...Object.entries(SIDE_LABEL).map(([v, label]) => h('option', { value: v }, label)));
+          sel.value = side;
+          return h('div', { class: 'item' },
+            h('span', { class: 'row' }, h('span', { class: 'dot' + (p.online ? ' on' : '') }), h('b', {}, p.name), ' is ', sel, ' this machine'),
+            sugg ? h('span', { class: 'row' }, h('span', { class: 'small' }, `${p.name} says it is ${SIDE_LABEL[sugg]} this machine`),
+              h('button', { onclick: () => call(api.setLayout(p.id, sugg)) }, 'Use this')) : null,
+            h('span', { class: 'muted small' }, !p.online ? 'offline' : allows === true ? 'allows control' : 'does not allow control yet'));
+        })
+      : [h('div', { class: 'muted' }, 'Pair a device first.')]));
+}
+
+function renderConsent(s) {
+  const p = s.input && s.input.consentPrompt;
+  const m = $('consent-modal');
+  if (!p) return m.classList.add('hidden');
+  $('consent-text').textContent = `${p.name} is trying to move its mouse and keyboard onto this machine.`;
+  m.classList.remove('hidden');
+}
+$('consent-yes').onclick = () => call(api.answerConsent(true));
+$('consent-no').onclick = () => call(api.answerConsent(false));
+
 function renderModal(s) {
   const m = $('modal');
   if (!s.pairPrompt) return m.classList.add('hidden');
@@ -215,9 +276,10 @@ $('shortcut-form').onsubmit = async (e) => {
   e.preventDefault();
   if (await call(api.saveShortcut($('sc-label').value, $('sc-command').value))) { $('sc-label').value = ''; $('sc-command').value = ''; }
 };
-for (const key of ['clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding'])
+for (const key of ['clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'inputSharing', 'allowRemoteInput', 'clipboardOnCross', 'edgeDrop', 'swapCmdCtrl', 'invertScroll'])
   $('set-' + key).onchange = (e) => call(api.updateSettings({ [key]: e.target.checked }));
 $('set-deviceName').onchange = (e) => e.target.value.trim() && call(api.updateSettings({ deviceName: e.target.value.trim() }), 'Saved – restart to re-announce the new name');
+$('set-pointerScale').onchange = (e) => { const n = parseFloat(e.target.value); if (n >= 0.25 && n <= 4) call(api.updateSettings({ pointerScale: n })); };
 $('set-listenPort').onchange = (e) => { const n = parseInt(e.target.value, 10); if (n >= 0 && n < 65536) call(api.updateSettings({ listenPort: n }), 'Saved – restart DevLink to apply'); };
 $('btn-downloads').onclick = () => call(api.chooseDownloads());
 

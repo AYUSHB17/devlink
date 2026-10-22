@@ -1,0 +1,6 @@
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; font-family: -apple-system, "Segoe UI", sans-serif; }
+#bar { position: absolute; inset: 4px; border-radius: 10px; background: rgba(47, 111, 237, .55); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; transition: background .15s; }
+#bar.hot { background: rgba(47, 111, 237, .92); }
+.vertical #label { writing-mode: vertical-rl; }
+.left #label { transform: rotate(180deg); }

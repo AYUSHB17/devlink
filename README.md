@@ -10,6 +10,8 @@ directly between your machines over the local network (no cloud, no account).
 | **Clipboard sync** | Text and images you copy on one machine appear on the other. Toggle in the Clipboard tab. |
 | **File & folder drop** | Drag files/folders onto the window or use the buttons. They land in `Downloads/DevLink/<device name>/` and never overwrite existing files. |
 | **Port forwarding** | `ssh -L` style: open `localhost:3000` on the Mac to reach the dev server on the PC's `localhost:3000`, over the encrypted link. |
+| **Shared mouse & keyboard** | The machines act like side-by-side monitors: push the cursor off the shared edge and it continues on the other machine, with the keyboard following. Either machine can lead. Cmd↔Ctrl swap, clipboard sent along when crossing. See [docs/INPUT_SHARING.md](docs/INPUT_SHARING.md). |
+| **Edge drop** | While dragging files, a drop strip appears on the shared edge; drop to send them to the other machine. |
 | **Shortcuts** | Saved terminal commands (one click opens Terminal / cmd) plus auto-suggested `ssh user@ip` for each connected device. |
 
 ## Security model
@@ -17,8 +19,10 @@ directly between your machines over the local network (no cloud, no account).
 * Each install has a long-term **Ed25519 identity key** (private key protected with the OS keystore through Electron `safeStorage` when available).
 * Every connection does an ephemeral **X25519** key exchange, derives per-direction keys with HKDF, and encrypts all traffic with **AES-256-GCM**. Both sides sign the handshake transcript, so only a paired device can connect.
 * **Pairing** needs "Allow pairing" switched on at one end (2-minute window, closes after 3 failed attempts), and a **short authentication string**: both screens show the same 6 digits derived from the handshake. The initiator commits to its handshake message before seeing the other's, so a man-in-the-middle can't pick a matching code. Only confirm if the codes are identical.
+* Receiving files from paired devices is **off by default** (Settings → "Accept files"). Existing installs keep the value they already saved.
+* Status data from the other device is re-validated field by field; only a plain username and IPv4 address can reach the suggested `ssh` shortcut.
 * Unknown devices are rejected; "Unpair" removes a device immediately.
-* Port forwards listen on `127.0.0.1` only, and the far side only connects to its own `127.0.0.1`. It can be disabled in Settings ("Allow paired devices to forward ports").
+* Port forwards listen on `127.0.0.1` only, and the far side only connects to its own `127.0.0.1`. It is **off by default**; turn it on in Settings ("Allow paired devices to forward ports") when you need it.
 * Received file paths are sanitised (no `..`, absolute paths, or Windows-reserved names) and confined to the receive folder.
 * Shortcut commands only run locally, from your own saved list; a peer cannot trigger commands.
 * Traffic stays on your LAN. Do **not** expose the listen port (default 47821) to the internet.
@@ -35,6 +39,7 @@ Protocol details are in [`src/main/protocol.ts`](src/main/protocol.ts).
 ```bash
 npm install
 node node_modules/electron/install.js   # only needed if npm skipped Electron's download script
+npm run build:native                   # optional: Rust helper for shared mouse & keyboard (needs cargo)
 npm start
 ```
 
@@ -79,6 +84,9 @@ No custom app icon yet (default Electron icon); add `build/icon.icns` and `build
 src/main/protocol.ts   framing, handshake, AES-GCM session
 src/main/core.ts       server, dialing, pairing, session registry, UI state
 src/main/{clipboard,files,forward,status,discovery,shortcuts}.ts   features
+src/main/input.ts      shared mouse & keyboard policy (crossing state machine, key mapping)
+src/main/input-helper.ts, edge-strip.ts   native helper process, edge drop windows
+native/devlink-input/  Rust helper: macOS CGEventTap/CGEventPost, Windows LL hooks/SendInput
 src/main/main.ts       Electron window, IPC, native clipboard adapter
 src/preload/           contextBridge API for the renderer
 src/renderer/          plain HTML/CSS/JS UI (no framework, no innerHTML for peer data)
@@ -93,7 +101,9 @@ See [`WINDOWS_TESTING.md`](WINDOWS_TESTING.md).
 
 ## Known limitations / ideas
 
-* Shared keyboard/mouse and screen sharing are not included (use Synergy/Barrier/Deskflow or Microsoft Mouse Without Borders alongside).
+* Shared mouse & keyboard is new and **untested between two physical machines** (only the crossing logic is tested, with a
+  fake helper). Needs Rust to build the helper (`npm run build:native`), and on macOS Accessibility + Input Monitoring
+  permission. The local cursor stays visible (frozen) while controlling the other machine; screen sharing isn't included.
 * No tray icon / run-at-login yet; closing the window quits the app (devices disconnect).
 * Received data in file transfers and port tunnels has no receive-side flow control (fine on a LAN, large transfers buffer in memory if the disk is slower than the network).
 * Empty folders are not transferred; symlinks are skipped.

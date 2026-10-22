@@ -100,11 +100,15 @@ export class ClipboardSync {
     this.record({ ts: Date.now(), dir: 'out', peer: 'all devices', kind: 'image', preview: `image (${Math.round(png.length / 1024)} KB)` });
   }
 
-  /** Push whatever is on the clipboard right now, even when sync is switched off. */
-  async pushNow(peerId?: string): Promise<boolean> {
+  /**
+   * Push whatever is on the clipboard right now. 'manual' (the user pressed a button) is accepted even when the
+   * receiver's sync is off; 'cross' (cursor crossed screens) only when the receiver allows clipboard-on-cross.
+   */
+  async pushNow(peerId?: string, reason: 'manual' | 'cross' = 'manual'): Promise<boolean> {
     const text = await this.cb.readText();
     const png = text ? null : await this.cb.readImagePng();
-    const msg = text ? { t: 'clip', kind: 'text', data: text, force: true } : png ? { t: 'clip', kind: 'image', data: png.toString('base64'), force: true } : null;
+    const flag = reason === 'manual' ? { force: true } : { cross: true };
+    const msg = text ? { t: 'clip', kind: 'text', data: text, ...flag } : png ? { t: 'clip', kind: 'image', data: png.toString('base64'), ...flag } : null;
     if (!msg) return false;
     if (peerId) this.core.send(peerId, msg);
     else this.core.broadcast(msg);
@@ -114,14 +118,17 @@ export class ClipboardSync {
 
   private async onMessage(peerId: string, msg: any): Promise<void> {
     const s = this.core.store.settings;
-    if (!s.clipboardSync && !msg.force) return;
+    const crossOk = msg.cross === true && s.clipboardOnCross;
+    if (!s.clipboardSync && !msg.force && !crossOk) return;
+    // a crossing hand-over is meant for this machine only; don't pass it on to other devices
+    const relay = (m: any) => !msg.cross && this.core.broadcast(m, peerId);
     if (msg.kind === 'text' && typeof msg.data === 'string' && msg.data.length <= MAX_TEXT) {
       const h = hash(msg.data);
       if (h === this.lastHash) return;
       this.lastHash = h;
       await this.cb.writeText(msg.data);
       this.record({ ts: Date.now(), dir: 'in', peer: this.peerName(peerId), kind: 'text', preview: preview(msg.data) });
-      this.core.broadcast(msg, peerId);
+      relay(msg);
     } else if (msg.kind === 'image' && typeof msg.data === 'string' && (s.clipboardImages || msg.force)) {
       const png = Buffer.from(msg.data, 'base64');
       if (png.length > MAX_IMAGE) return;
@@ -130,7 +137,7 @@ export class ClipboardSync {
       this.lastHash = h;
       await this.cb.writeImagePng(png);
       this.record({ ts: Date.now(), dir: 'in', peer: this.peerName(peerId), kind: 'image', preview: `image (${Math.round(png.length / 1024)} KB)` });
-      this.core.broadcast(msg, peerId);
+      relay(msg);
     }
   }
 }

@@ -21,7 +21,20 @@ export interface Settings {
   acceptFiles: boolean;
   downloadsDir: string;
   allowForwarding: boolean;
+  /** shared mouse & keyboard: let this machine's input cross to peers */
+  inputSharing: boolean;
+  /** let paired peers drive this machine's mouse & keyboard */
+  allowRemoteInput: boolean;
+  /** peerId -> side of this machine that peer sits on */
+  inputLayout: Record<string, ScreenSide>;
+  swapCmdCtrl: boolean;
+  pointerScale: number;
+  invertScroll: boolean;
+  clipboardOnCross: boolean;
+  edgeDrop: boolean;
 }
+
+export type ScreenSide = 'left' | 'right' | 'top' | 'bottom';
 
 export interface ForwardRule {
   id: string;
@@ -84,9 +97,18 @@ export class Store {
         listenPort: DEFAULT_PORT,
         clipboardSync: true,
         clipboardImages: true,
-        acceptFiles: true,
+        // off until the user opts in: a paired device can otherwise write files here / reach this machine's localhost
+        acceptFiles: false,
         downloadsDir: path.join(os.homedir(), 'Downloads', 'DevLink'),
-        allowForwarding: true,
+        allowForwarding: false,
+        inputSharing: false,
+        allowRemoteInput: false,
+        inputLayout: {},
+        swapCmdCtrl: true,
+        pointerScale: 1,
+        invertScroll: false,
+        clipboardOnCross: true,
+        edgeDrop: true,
         ...defaults,
         ...(loaded.settings ?? {}),
       },
@@ -124,6 +146,7 @@ export class Store {
   }
   removePeer(id: string): void {
     delete this.data.peers[id];
+    delete this.data.settings.inputLayout?.[id];
     this.data.forwards = this.data.forwards.filter((f) => f.peerId !== id);
     this.save();
   }
