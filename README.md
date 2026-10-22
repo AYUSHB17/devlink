@@ -17,8 +17,10 @@ directly between your machines over the local network (no cloud, no account).
 * Each install has a long-term **Ed25519 identity key** (private key protected with the OS keystore through Electron `safeStorage` when available).
 * Every connection does an ephemeral **X25519** key exchange, derives per-direction keys with HKDF, and encrypts all traffic with **AES-256-GCM**. Both sides sign the handshake transcript, so only a paired device can connect.
 * **Pairing** needs "Allow pairing" switched on at one end (2-minute window, closes after 3 failed attempts), and a **short authentication string**: both screens show the same 6 digits derived from the handshake. The initiator commits to its handshake message before seeing the other's, so a man-in-the-middle can't pick a matching code. Only confirm if the codes are identical.
+* Receiving files from paired devices is **off by default** (Settings → "Accept files"). Existing installs keep the value they already saved.
+* Status data from the other device is re-validated field by field; only a plain username and IPv4 address can reach the suggested `ssh` shortcut.
 * Unknown devices are rejected; "Unpair" removes a device immediately.
-* Port forwards listen on `127.0.0.1` only, and the far side only connects to its own `127.0.0.1`. It can be disabled in Settings ("Allow paired devices to forward ports").
+* Port forwards listen on `127.0.0.1` only, and the far side only connects to its own `127.0.0.1`. It is **off by default**; turn it on in Settings ("Allow paired devices to forward ports") when you need it.
 * Received file paths are sanitised (no `..`, absolute paths, or Windows-reserved names) and confined to the receive folder.
 * Shortcut commands only run locally, from your own saved list; a peer cannot trigger commands.
 * Traffic stays on your LAN. Do **not** expose the listen port (default 47821) to the internet.

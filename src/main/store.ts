@@ -84,9 +84,10 @@ export class Store {
         listenPort: DEFAULT_PORT,
         clipboardSync: true,
         clipboardImages: true,
-        acceptFiles: true,
+        // off until the user opts in: a paired device can otherwise write files here / reach this machine's localhost
+        acceptFiles: false,
         downloadsDir: path.join(os.homedir(), 'Downloads', 'DevLink'),
-        allowForwarding: true,
+        allowForwarding: false,
         ...defaults,
         ...(loaded.settings ?? {}),
       },

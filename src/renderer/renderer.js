@@ -156,11 +156,17 @@ function renderPorts(s) {
 
 function renderShortcuts(s) {
   const run = (cmd) => call(api.runCommand(cmd));
-  const suggestions = s.peers.filter((p) => p.status && p.status.ips[0]).map((p) => `ssh ${p.status.username}@${p.status.ips[0]}`);
+  // The status comes from the other device, so re-check it before it becomes a terminal command.
+  const safeSsh = (p) => {
+    const st = p.status;
+    const ip = st && Array.isArray(st.ips) ? st.ips[0] : '';
+    const ok = typeof st?.username === 'string' && /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/.test(st.username) && typeof ip === 'string' && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
+    return ok ? `ssh ${st.username}@${ip}` : null;
+  };
+  const sshPeers = s.peers.map((p) => ({ p, cmd: safeSsh(p) })).filter((x) => x.cmd);
   $('suggested').replaceChildren(
-    ...(suggestions.length
-      ? s.peers.filter((p) => p.status && p.status.ips[0]).map((p) => {
-          const cmd = `ssh ${p.status.username}@${p.status.ips[0]}`;
+    ...(sshPeers.length
+      ? sshPeers.map(({ p, cmd }) => {
           return h('div', { class: 'item' },
             h('span', {}, `SSH into ${p.name}  `, h('code', {}, cmd)),
             h('span', { class: 'row' }, h('button', { onclick: () => run(cmd) }, 'Open terminal'), h('button', { onclick: () => call(api.copy(cmd), 'Copied') }, 'Copy')));
