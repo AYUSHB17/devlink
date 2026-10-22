@@ -5,6 +5,7 @@ import { ClipboardAdapter, ClipboardSync } from './clipboard';
 import { Discovery, DiscoveredDevice } from './discovery';
 import { FileTransfers } from './files';
 import { PortForwards } from './forward';
+import { RemoteFs } from './remotefs';
 import { InputBackend, InputShare } from './input';
 import { fingerprint, handshake, HandshakeCtx, PeerHello, Session } from './protocol';
 import { SecretBox, Settings, Store } from './store';
@@ -40,6 +41,7 @@ export class Core extends EventEmitter {
   readonly forwards: PortForwards;
   readonly status: StatusReporter;
   readonly input: InputShare;
+  readonly remotefs: RemoteFs;
   private discovery?: Discovery;
   private discovered = new Map<string, DiscoveredDevice>();
   private server?: net.Server;
@@ -65,6 +67,7 @@ export class Core extends EventEmitter {
     this.forwards = new PortForwards(this);
     this.status = new StatusReporter(this);
     this.input = new InputShare(this, opts.inputBackend ?? null);
+    this.remotefs = new RemoteFs(this);
   }
 
   get id(): string {
@@ -368,6 +371,7 @@ export class Core extends EventEmitter {
       settings: s,
       forwards: this.forwards.snapshot(),
       input: this.input.snapshot(),
+      remotefs: this.remotefs.snapshot(),
       transfers: this.files.snapshot(),
       clipboardLog: this.clipboard.log,
       shortcuts: this.store.shortcuts,

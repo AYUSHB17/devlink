@@ -8,6 +8,7 @@ import { ControlBanner } from './control-banner';
 import { EdgeStrips, stripPage } from './edge-strip';
 import { findHelper, HelperProcess } from './input-helper';
 import { SecretBox } from './store';
+import { registerRemoteFsIpc } from './remotefs-ipc';
 import { runInTerminal } from './shortcuts';
 
 // Two instances on one machine (for testing): DEVLINK_PROFILE=b DEVLINK_PORT=47822 npm start
@@ -224,6 +225,8 @@ app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock?.setBadge(snap.mode === 'following' ? '⌨' : '');
   });
   registerIpc();
+  const remoteEdit = registerRemoteFsIpc(core, { ipcMain, dialog, shell, win: () => win, editDir: path.join(app.getPath('userData'), 'devlink-edit') });
+  app.on('before-quit', () => remoteEdit.stopAll());
   await core.start();
   createWindow();
   if (smoke) {

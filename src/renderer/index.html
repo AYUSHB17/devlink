@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DevLink</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="remotefiles.css" />
 </head>
 <body>
   <aside id="sidebar">
@@ -15,6 +16,7 @@
       <button data-view="screens">Screens</button>
       <button data-view="clipboard">Clipboard</button>
       <button data-view="files">Files</button>
+      <button data-view="remotefiles">Remote files</button>
       <button data-view="ports">Ports</button>
       <button data-view="shortcuts">Shortcuts</button>
       <button data-view="settings">Settings</button>
@@ -91,6 +93,8 @@
       <div id="transfers" class="list"></div>
     </section>
 
+    <section id="view-remotefiles" class="view"></section>
+
     <section id="view-ports" class="view">
       <h1>Port forwarding</h1>
       <p class="muted">Reach a service on the other machine as <code>localhost</code> here – e.g. forward local 3000 to the other machine's dev server on 3000.</p>
@@ -155,5 +159,6 @@
   </div>
   <div id="toast" class="toast hidden"></div>
   <script src="renderer.js"></script>
+  <script src="remotefiles.js"></script>
 </body>
 </html>
