@@ -31,7 +31,11 @@ interface Incoming {
 }
 
 const CHUNK = 128 * 1024;
-const MAX_FILES = 50_000;
+/** Unacknowledged bytes a sender may have in flight per peer (receiver acks once data is on disk). */
+const WINDOW = 16 * 1024 * 1024;
+const ACK_EVERY = 1024 * 1024;
+const ACK_TIMEOUT_MS = 30_000;
+const MAX_FILES = 1_000_000;
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
 /** Makes a peer-supplied relative path safe to join under a root on both macOS and Windows. */
@@ -60,11 +64,21 @@ export class FileTransfers {
   private transfers = new Map<string, Transfer>();
   private incoming = new Map<string, Incoming>(); // peerId:fid
   private fidCounter = 1;
+  /** sender side: bytes not yet acknowledged by each peer, and loops waiting for room */
+  private credit = new Map<string, { inflight: number; waiters: (() => void)[] }>();
+  /** receiver side: bytes written to disk but not yet acknowledged, per peer */
+  private unacked = new Map<string, number>();
 
   constructor(private core: Core) {
     core.onJson('file', (peerId, msg) => this.onMessage(peerId, msg));
     core.onBin(BIN_FILE, (peerId, data) => this.onChunk(peerId, data));
-    core.onPeerDown((peerId) => this.abortPeer(peerId));
+    core.onPeerDown((peerId) => {
+      this.abortPeer(peerId);
+      const c = this.credit.get(peerId);
+      this.credit.delete(peerId);
+      this.unacked.delete(peerId);
+      for (const w of c?.waiters ?? []) w();
+    });
   }
 
   snapshot(): Transfer[] {
@@ -87,22 +101,18 @@ export class FileTransfers {
     const session = this.core.sessions.get(peerId);
     if (!session) throw new Error('device is offline');
     for (const p of paths) {
-      const st = fs.statSync(p);
       const root = path.basename(p);
-      const files: { abs: string; rel: string; size: number }[] = [];
-      if (st.isDirectory()) this.walk(p, root, files);
-      else if (st.isFile()) files.push({ abs: p, rel: root, size: st.size });
-      else continue;
       const batch = crypto.randomBytes(6).toString('hex');
+      // Create the row first so scan problems (unreadable folder, too many files) are visible in the UI.
       const t: Transfer = {
         id: `out-${batch}`,
         peerId,
         peerName: this.peerName(peerId),
         dir: 'out',
         name: root,
-        files: files.length,
+        files: 0,
         filesDone: 0,
-        bytes: files.reduce((n, f) => n + f.size, 0),
+        bytes: 0,
         bytesDone: 0,
         state: 'active',
         ts: Date.now(),
@@ -110,6 +120,16 @@ export class FileTransfers {
       this.transfers.set(t.id, t);
       this.core.changed();
       try {
+        const files: { abs: string; rel: string; size: number }[] = [];
+        const skipped = { n: 0 };
+        const st = await fs.promises.stat(p);
+        if (st.isDirectory()) await this.walk(p, root, files, skipped);
+        else if (st.isFile()) files.push({ abs: p, rel: root, size: st.size });
+        else throw new Error('not a file or folder');
+        t.files = files.length;
+        t.bytes = files.reduce((n, f) => n + f.size, 0);
+        if (skipped.n) t.name = `${root} (${skipped.n} unreadable skipped)`;
+        this.touch(t);
         for (const f of files) {
           const fid = this.fidCounter++;
           session.sendJSON({
@@ -126,6 +146,8 @@ export class FileTransfers {
           head.writeUInt32BE(fid, 0);
           for await (const chunk of fs.createReadStream(f.abs, { highWaterMark: CHUNK })) {
             if (session.closed) throw new Error('connection lost');
+            await this.waitForWindow(peerId, session);
+            this.creditOf(peerId).inflight += (chunk as Buffer).length;
             await session.sendBin(BIN_FILE, Buffer.concat([head, chunk as Buffer]));
             t.bytesDone += (chunk as Buffer).length;
             this.core.changed();
@@ -137,17 +159,66 @@ export class FileTransfers {
       } catch (e: any) {
         t.state = 'error';
         t.error = e.message;
+        this.core.log(`send ${root}: ${e.message}`);
       }
       this.touch(t);
     }
   }
 
-  private walk(dir: string, rel: string, out: { abs: string; rel: string; size: number }[]): void {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (out.length >= MAX_FILES) throw new Error(`folder has more than ${MAX_FILES} files`);
+  private creditOf(peerId: string) {
+    let c = this.credit.get(peerId);
+    if (!c) this.credit.set(peerId, (c = { inflight: 0, waiters: [] }));
+    return c;
+  }
+
+  /**
+   * Application-level flow control: never let more than WINDOW bytes be in flight to a peer.
+   * (Pausing the socket instead would also stall input events, clipboard and pings on the same session.)
+   */
+  private async waitForWindow(peerId: string, session: { closed: boolean }): Promise<void> {
+    const c = this.creditOf(peerId);
+    while (c.inflight > WINDOW) {
+      if (session.closed) throw new Error('connection lost');
+      const got = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), ACK_TIMEOUT_MS);
+        c.waiters.push(() => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+      if (!got) throw new Error('the other device stopped acknowledging data');
+    }
+  }
+
+  private ack(peerId: string, bytes: number): void {
+    const n = (this.unacked.get(peerId) ?? 0) + bytes;
+    if (n >= ACK_EVERY) {
+      this.unacked.set(peerId, 0);
+      this.core.send(peerId, { t: 'file-ack', bytes: n });
+    } else this.unacked.set(peerId, n);
+  }
+
+  /** Collects files below `dir`, skipping (and counting) anything unreadable instead of aborting the whole folder. */
+  private async walk(dir: string, rel: string, out: { abs: string; rel: string; size: number }[], skipped: { n: number }): Promise<void> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      skipped.n++;
+      return;
+    }
+    for (const e of entries) {
+      if (out.length >= MAX_FILES) throw new Error(`folder has more than ${MAX_FILES.toLocaleString()} files; send it in parts or zip it`);
       const abs = path.join(dir, e.name);
-      if (e.isDirectory()) this.walk(abs, path.join(rel, e.name), out);
-      else if (e.isFile()) out.push({ abs, rel: path.join(rel, e.name), size: fs.statSync(abs).size });
+      if (e.isDirectory()) await this.walk(abs, path.join(rel, e.name), out, skipped);
+      else if (e.isFile()) {
+        try {
+          await fs.promises.access(abs, fs.constants.R_OK);
+          out.push({ abs, rel: path.join(rel, e.name), size: (await fs.promises.stat(abs)).size });
+        } catch {
+          skipped.n++;
+        }
+      }
     }
   }
 
@@ -203,6 +274,12 @@ export class FileTransfers {
       if (!inc) return;
       this.incoming.delete(key(msg.fid));
       const t = this.transfers.get(inc.batch)!;
+      // flush the ack remainder so the sender's window never stays partly used
+      const rest = this.unacked.get(peerId) ?? 0;
+      if (rest) {
+        this.unacked.set(peerId, 0);
+        this.core.send(peerId, { t: 'file-ack', bytes: rest });
+      }
       inc.ws.end(() => {
         if (inc.failed || inc.got !== inc.size) {
           t.state = 'error';
@@ -210,30 +287,42 @@ export class FileTransfers {
           fs.rm(inc.file, { force: true }, () => undefined);
         } else {
           t.filesDone++;
-          if (t.filesDone >= t.files && t.state === 'active') t.state = 'done';
+          if (t.filesDone >= t.files && t.state === 'active') {
+            t.state = 'done';
+            this.core.emit('received', t);
+          }
         }
         this.touch(t);
       });
+    } else if (msg.t === 'file-ack') {
+      const c = this.credit.get(peerId);
+      const n = Number(msg.bytes);
+      if (!c || !Number.isFinite(n) || n <= 0) return;
+      c.inflight = Math.max(0, c.inflight - n);
+      for (const w of c.waiters.splice(0)) w();
     } else if (msg.t === 'file-reject') {
       for (const t of this.transfers.values()) if (t.dir === 'out' && t.peerId === peerId && t.state === 'active') {
         t.state = 'error';
-        t.error = String(msg.reason ?? 'rejected');
+        t.error = String(msg.reason ?? 'rejected').slice(0, 200);
         this.touch(t);
+        this.core.emit('send-failed', t);
       }
     }
   }
 
   private onChunk(peerId: string, data: Buffer): void {
     if (data.length < 4) return;
-    const inc = this.incoming.get(`${peerId}:${data.readUInt32BE(0)}`);
-    if (!inc) return;
     const body = data.subarray(4);
+    const inc = this.incoming.get(`${peerId}:${data.readUInt32BE(0)}`);
+    // data for a file we refused or already failed still counts against the sender's window
+    if (!inc || inc.failed) return this.ack(peerId, body.length);
     inc.got += body.length;
     if (inc.got > inc.size) {
       inc.failed = 'received more data than announced';
-      return;
+      return this.ack(peerId, body.length);
     }
-    inc.ws.write(body);
+    // acknowledge only once the bytes are on disk, so a slow disk throttles the sender
+    inc.ws.write(body, () => this.ack(peerId, body.length));
     const t = this.transfers.get(inc.batch);
     if (t) {
       t.bytesDone += body.length;

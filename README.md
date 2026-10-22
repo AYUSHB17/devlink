@@ -10,6 +10,8 @@ directly between your machines over the local network (no cloud, no account).
 | **Clipboard sync** | Text and images you copy on one machine appear on the other. Toggle in the Clipboard tab. |
 | **File & folder drop** | Drag files/folders onto the window or use the buttons. They land in `Downloads/DevLink/<device name>/` and never overwrite existing files. |
 | **Port forwarding** | `ssh -L` style: open `localhost:3000` on the Mac to reach the dev server on the PC's `localhost:3000`, over the encrypted link. |
+| **Shared mouse & keyboard** | The machines act like side-by-side monitors: push the cursor off the shared edge and it continues on the other machine, with the keyboard following. Either machine can lead. Cmd↔Ctrl swap, clipboard sent along when crossing. See [docs/INPUT_SHARING.md](docs/INPUT_SHARING.md). |
+| **Edge drop** | While dragging files, a drop strip appears on the shared edge; drop to send them to the other machine. |
 | **Shortcuts** | Saved terminal commands (one click opens Terminal / cmd) plus auto-suggested `ssh user@ip` for each connected device. |
 
 ## Security model
@@ -37,6 +39,7 @@ Protocol details are in [`src/main/protocol.ts`](src/main/protocol.ts).
 ```bash
 npm install
 node node_modules/electron/install.js   # only needed if npm skipped Electron's download script
+npm run build:native                   # optional: Rust helper for shared mouse & keyboard (needs cargo)
 npm start
 ```
 
@@ -81,6 +84,9 @@ No custom app icon yet (default Electron icon); add `build/icon.icns` and `build
 src/main/protocol.ts   framing, handshake, AES-GCM session
 src/main/core.ts       server, dialing, pairing, session registry, UI state
 src/main/{clipboard,files,forward,status,discovery,shortcuts}.ts   features
+src/main/input.ts      shared mouse & keyboard policy (crossing state machine, key mapping)
+src/main/input-helper.ts, edge-strip.ts   native helper process, edge drop windows
+native/devlink-input/  Rust helper: macOS CGEventTap/CGEventPost, Windows LL hooks/SendInput
 src/main/main.ts       Electron window, IPC, native clipboard adapter
 src/preload/           contextBridge API for the renderer
 src/renderer/          plain HTML/CSS/JS UI (no framework, no innerHTML for peer data)
@@ -95,7 +101,9 @@ See [`WINDOWS_TESTING.md`](WINDOWS_TESTING.md).
 
 ## Known limitations / ideas
 
-* Shared keyboard/mouse and screen sharing are not included (use Synergy/Barrier/Deskflow or Microsoft Mouse Without Borders alongside).
+* Shared mouse & keyboard is new and **untested between two physical machines** (only the crossing logic is tested, with a
+  fake helper). Needs Rust to build the helper (`npm run build:native`), and on macOS Accessibility + Input Monitoring
+  permission. The local cursor stays visible (frozen) while controlling the other machine; screen sharing isn't included.
 * No tray icon / run-at-login yet; closing the window quits the app (devices disconnect).
 * Received data in file transfers and port tunnels has no receive-side flow control (fine on a LAN, large transfers buffer in memory if the disk is slower than the network).
 * Empty folders are not transferred; symlinks are skipped.

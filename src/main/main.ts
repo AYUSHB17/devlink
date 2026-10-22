@@ -1,9 +1,11 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ClipboardAdapter } from './clipboard';
 import { Core } from './core';
+import { EdgeStrips, stripPage } from './edge-strip';
+import { findHelper, HelperProcess } from './input-helper';
 import { SecretBox } from './store';
 import { runInTerminal } from './shortcuts';
 
@@ -15,6 +17,9 @@ if (!profile && !app.requestSingleInstanceLock()) app.quit();
 const smoke = process.argv.includes('--smoke');
 let win: BrowserWindow | null = null;
 let core: Core;
+let strips: EdgeStrips | null = null;
+const preloadPath = path.join(__dirname, '..', 'preload', 'preload.js');
+const rendererDir = path.join(__dirname, '..', 'renderer');
 
 // Electron 45's clipboard is an async, Web-style API (Promise based).
 const electronClipboard: ClipboardAdapter = {
@@ -48,7 +53,7 @@ function createWindow(): void {
     title: 'DevLink' + (profile ? ` (${profile})` : ''),
     show: !smoke,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      preload: preloadPath,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -56,8 +61,12 @@ function createWindow(): void {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.on('closed', () => (win = null));
+  win.loadFile(path.join(rendererDir, 'index.html'));
+  win.on('closed', () => {
+    win = null;
+    // the hidden edge strips are windows too; closing the main window still quits
+    app.quit();
+  });
 }
 
 let pending = false;
@@ -93,9 +102,14 @@ function registerIpc(): void {
   handle('unpair', (id: string) => core.unpair(id));
   handle('settings', (patch: Record<string, unknown>) => {
     const allowed = ['deviceName', 'clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'listenPort'];
+    const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop'];
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (k in patch) clean[k] = patch[k];
+    for (const k of bools) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
+    const scale = Number(patch.pointerScale);
+    if ('pointerScale' in patch && scale >= 0.25 && scale <= 4) clean.pointerScale = scale;
     core.store.updateSettings(clean);
+    core.input.announce();
     core.changed();
   });
   handle('settings:downloads', async () => {
@@ -143,7 +157,21 @@ function registerIpc(): void {
   // Only commands the user saved (or the suggested ssh lines built from paired devices) can be run.
   handle('shortcut:run', (command: string) => runInTerminal(String(command)));
   handle('copy', (text: string) => clipboard.writeText(String(text)));
+  handle('input:layout', (peerId: string, side: string | null) => {
+    if (!core.store.getPeer(String(peerId))) throw new Error('unknown device');
+    if (side !== null && !['left', 'right', 'top', 'bottom'].includes(side)) throw new Error('bad side');
+    core.input.setLayout(String(peerId), side as any);
+  });
+  // must be answered on this machine; InputShare ignores it while this machine is being remote controlled
+  handle('input:consent', (ok: boolean) => core.input.answerConsent(ok === true));
+  handle('input:privacy', (pane: string) => {
+    if (process.platform !== 'darwin') return;
+    const anchor = pane === 'input' ? 'Privacy_ListenEvent' : 'Privacy_Accessibility';
+    return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
+  });
 }
+
+if (process.platform === 'win32') app.setAppUserModelId('in.optimist.devlink');
 
 app.whenReady().then(async () => {
   const port = process.env.DEVLINK_PORT ? Number(process.env.DEVLINK_PORT) : undefined;
@@ -157,8 +185,41 @@ app.whenReady().then(async () => {
       deviceName: (require('os').hostname() as string).replace(/\.local$/, '') + (profile ? `-${profile}` : ''),
     },
     log: (m) => console.log(`[devlink] ${m}`),
+    inputBackend: new HelperProcess(
+      findHelper(path.join(__dirname, '..', '..'), app.isPackaged ? process.resourcesPath : undefined),
+      (m) => console.log(`[devlink] ${m}`),
+    ),
   });
   core.on('changed', pushState);
+  core.on('received', (t: { name: string; peerName: string; path?: string }) => {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title: `Received from ${t.peerName}`, body: t.name });
+    n.on('click', () => t.path && shell.showItemInFolder(t.path));
+    n.show();
+  });
+  strips = new EdgeStrips(core, preloadPath, stripPage(rendererDir));
+  core.on('send-failed', (t: { name: string; peerName: string; error?: string }) => {
+    if (Notification.isSupported()) new Notification({ title: `Couldn't send to ${t.peerName}`, body: `${t.name}: ${t.error ?? 'failed'}` }).show();
+  });
+  core.input.on('consent', (peerName: string) => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+    if (Notification.isSupported()) new Notification({ title: 'DevLink', body: `${peerName} wants to control this machine – answer in DevLink` }).show();
+  });
+  // visible "being controlled" indicator: window title, plus the Dock badge on macOS
+  let lastMode = '';
+  core.on('changed', () => {
+    const snap = core.input.snapshot();
+    const mode = `${snap.mode}:${snap.peer ?? ''}`;
+    if (mode === lastMode) return;
+    lastMode = mode;
+    const label = snap.mode === 'following' ? `controlled by ${snap.peer}` : snap.mode === 'leading' ? `controlling ${snap.peer}` : '';
+    win?.setTitle('DevLink' + (profile ? ` (${profile})` : '') + (label ? ` – ${label}` : ''));
+    if (process.platform === 'darwin') app.dock?.setBadge(snap.mode === 'following' ? '⌨' : '');
+  });
   registerIpc();
   await core.start();
   createWindow();
@@ -179,7 +240,10 @@ app.on('second-instance', () => {
   }
 });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => void core?.stop());
+app.on('before-quit', () => {
+  strips?.destroy();
+  void core?.stop();
+});
 app.on('activate', () => {
   if (!win) createWindow();
 });

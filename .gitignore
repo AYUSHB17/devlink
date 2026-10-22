@@ -3,3 +3,4 @@ dist/
 release/
 .tools/
 .DS_Store
+native/devlink-input/target/

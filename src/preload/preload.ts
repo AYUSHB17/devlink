@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld('devlink', {
   removeShortcut: (id: string) => invoke('shortcut:remove', id),
   runCommand: (command: string) => invoke('shortcut:run', command),
   copy: (text: string) => invoke('copy', text),
+  setLayout: (peerId: string, side: string | null) => invoke('input:layout', peerId, side),
+  openPrivacy: (pane: string) => invoke('input:privacy', pane),
+  answerConsent: (ok: boolean) => invoke('input:consent', ok),
 });

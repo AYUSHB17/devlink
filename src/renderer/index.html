@@ -12,6 +12,7 @@
     <div class="brand">DevLink</div>
     <nav id="nav">
       <button data-view="devices" class="active">Devices</button>
+      <button data-view="screens">Screens</button>
       <button data-view="clipboard">Clipboard</button>
       <button data-view="files">Files</button>
       <button data-view="ports">Ports</button>
@@ -44,6 +45,26 @@
           <input id="pair-port" placeholder="port" size="6" value="47821" autocomplete="off" />
           <button type="submit">Pair</button>
         </form>
+      </div>
+    </section>
+
+    <section id="view-screens" class="view">
+      <h1>Screens</h1>
+      <p class="muted">Use one mouse and keyboard across both machines: move the cursor off the edge that faces the other device and it continues there. Drag files to that edge to send them.</p>
+      <div id="screen-status" class="card"></div>
+      <div class="card">
+        <h2>Arrangement</h2>
+        <div id="layout"></div>
+      </div>
+      <div class="card col">
+        <label class="switch"><input type="checkbox" id="set-inputSharing" /> Let my mouse and keyboard move to paired devices</label>
+        <label class="switch"><input type="checkbox" id="set-allowRemoteInput" /> Allow paired devices to control this machine</label>
+        <label class="switch"><input type="checkbox" id="set-clipboardOnCross" /> Send my clipboard along when the cursor crosses</label>
+        <label class="switch"><input type="checkbox" id="set-edgeDrop" /> Show a drop zone on the shared edge while dragging files</label>
+        <label class="switch"><input type="checkbox" id="set-swapCmdCtrl" /> Swap Cmd and Ctrl between macOS and Windows</label>
+        <label class="switch"><input type="checkbox" id="set-invertScroll" /> Invert scrolling for input from other devices</label>
+        <label>Pointer speed for input from other devices <input id="set-pointerScale" size="4" /> <span class="muted small">(1 = same, 0.25–4)</span></label>
+        <p class="muted small">Get your mouse back at any time with <b>Ctrl + Option/Alt + Shift + Esc</b>, or just move the other machine's own mouse.</p>
       </div>
     </section>
 
@@ -118,6 +139,17 @@
       <div class="row end">
         <button id="modal-no">Doesn't match</button>
         <button id="modal-yes" class="primary">Codes match</button>
+      </div>
+    </div>
+  </div>
+  <div id="consent-modal" class="modal hidden">
+    <div class="dialog">
+      <h2>Allow remote control?</h2>
+      <p id="consent-text"></p>
+      <p class="muted small">It can use this machine's mouse and keyboard until you take control back (move this machine's own mouse, or press Ctrl + Alt/Option + Shift + Esc). You'll be asked again after DevLink reconnects or restarts.</p>
+      <div class="row end">
+        <button id="consent-no">Don't allow</button>
+        <button id="consent-yes" class="primary">Allow for this connection</button>
       </div>
     </div>
   </div>

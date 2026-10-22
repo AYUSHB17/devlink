@@ -27,6 +27,16 @@ npm -v
 If Node is missing, install the **LTS** version from https://nodejs.org (default options), then open a **new**
 PowerShell window.
 
+For the shared mouse & keyboard (Screens tab) you also need **Rust**, to build the small native helper
+`native/devlink-input`:
+
+```powershell
+winget install Rustlang.Rustup     # or download rustup-init.exe from https://rustup.rs
+```
+
+When rustup asks, let it install the **Visual Studio C++ Build Tools** (the MSVC linker). Open a new PowerShell and
+check `cargo --version`. Everything else in DevLink works without Rust.
+
 ## 2. Install and start
 
 From the project folder (the one containing `package.json`):
@@ -49,11 +59,19 @@ Why those flags:
   `Remove-Item -Recurse -Force node_modules, dist, release, .tools -ErrorAction SilentlyContinue`
 - `npm start` compiles TypeScript (`tsc`) into `dist/` and launches Electron. A window titled **DevLink** should open.
 
+Build the input helper (needed for the Screens tab), then restart DevLink:
+
+```powershell
+npm run build:native   # creates native\devlink-input\target\release\devlink-input.exe
+```
+
 Quick self-checks that don't need the Mac:
 
 ```powershell
-npm test          # integration tests, should end with "pass 9, fail 0"
+npm test          # integration tests, all should pass (0 failures)
 npm run smoke     # prints SMOKE_OK when the window and core boot
+cd native\devlink-input; cargo test; .\target\release\devlink-input.exe --probe; cd ..\..
+# --probe prints one JSON line with "platform":"windows" and your monitors' pixel sizes
 ```
 
 ## 3. Windows Firewall
@@ -91,6 +109,19 @@ The Mac must have DevLink running too (`npm start` in its folder) and be on the 
       on the Mac, add forward local 8000 → remote 8000 on Windows, open `http://localhost:8000`)
 - [ ] Shortcuts tab: "Open terminal" opens a cmd window (least-tested part; quoting of commands with spaces/quotes)
 - [ ] Quit and restart one side: they reconnect within ~5 seconds
+- [ ] **Screens tab – shared mouse & keyboard** (both machines: tick "Let my mouse and keyboard move…" and "Allow
+      paired devices to control this machine"; on one machine set where the other sits, e.g. "Windows is right of
+      this machine"; the other machine updates automatically). Then check:
+  - [ ] Mac cursor pushed off its right edge appears at the left edge of Windows; moving back returns it
+  - [ ] Typing, Cmd+C / Cmd+V on the Mac keyboard act as Ctrl+C / Ctrl+V on Windows (and the reverse)
+  - [ ] Left/right/middle click, double-click, drag to select text, scroll wheel, trackpad scroll (direction ok?)
+  - [ ] Windows mouse/keyboard driving the Mac (either machine can lead)
+  - [ ] Touching the idle machine's own mouse takes control back; `Ctrl+Alt+Shift+Esc` always releases
+  - [ ] Pulling the network cable / quitting DevLink on one side releases the mouse on the other within seconds
+  - [ ] Different resolutions / display scaling (e.g. 150 % on Windows): the cursor enters at the matching height
+  - [ ] Drag a file towards the shared edge: a blue "Drop to send…" strip appears; dropping sends it
+  - [ ] Keys that may be wrong: AltGr, non-US layouts, NumLock, Pause, PrintScreen, media keys (not supported yet)
+  - [ ] Known: injected input can't reach admin/elevated windows or UAC prompts unless DevLink runs as admin
 - [ ] Optional: `npm run dist:win` builds an installer and portable exe in `release\`
 
 ## 6. Troubleshooting
