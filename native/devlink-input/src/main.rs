@@ -29,6 +29,14 @@ static MAGIC: AtomicI64 = AtomicI64::new(0);
 pub fn magic() -> i64 {
     MAGIC.load(Ordering::Relaxed)
 }
+/// Windows hands low-level hooks only the low 32 bits of the `dwExtraInfo` we attached with SendInput, so a full
+/// 64-bit comparison never matches and our own injected input looks like the local user (which makes a follower
+/// hand control straight back). Compare just the low 32 bits.
+#[allow(dead_code)] // only the Windows hooks use it
+pub fn tag_matches(extra: u64) -> bool {
+    (extra & 0xffff_ffff) == (magic() as u64 & 0xffff_ffff)
+}
+
 fn init_magic() {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
@@ -475,6 +483,15 @@ fn handle(cmd: Cmd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn our_tag_is_recognised_when_windows_truncates_it_to_32_bits() {
+        MAGIC.store(0x111e_f5a3_2902_9c47, Ordering::Relaxed);
+        assert!(tag_matches(0x2902_9c47), "the 32-bit value the hook sees must match");
+        assert!(tag_matches(0x111e_f5a3_2902_9c47), "the full value matches too");
+        assert!(!tag_matches(0), "input with no tag is not ours");
+        assert!(!tag_matches(0x2902_9c46), "a different tag is not ours");
+    }
 
     const W: f64 = 1920.0;
     fn screens() -> Vec<Rect> {

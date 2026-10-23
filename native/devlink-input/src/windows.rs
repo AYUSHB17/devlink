@@ -102,7 +102,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         return CallNextHookEx(null_mut(), code, wparam, lparam);
     }
     let info = &*(lparam as *const MSLLHOOKSTRUCT);
-    let ours = info.flags & LLMHF_INJECTED != 0 && info.dwExtraInfo as i64 == magic();
+    let ours = info.flags & LLMHF_INJECTED != 0 && tag_matches(info.dwExtraInfo as u64);
     let msg = wparam as u32;
     let (x, y) = (info.pt.x, info.pt.y);
     LAST_HOOK_TICK.store(info.time, Ordering::Relaxed);
@@ -168,7 +168,7 @@ unsafe extern "system" fn kbd_proc(code: i32, wparam: WPARAM, lparam: LPARAM) ->
         return CallNextHookEx(null_mut(), code, wparam, lparam);
     }
     let k = &*(lparam as *const KBDLLHOOKSTRUCT);
-    let ours = k.flags & LLKHF_INJECTED != 0 && k.dwExtraInfo as i64 == magic();
+    let ours = k.flags & LLKHF_INJECTED != 0 && tag_matches(k.dwExtraInfo as u64);
     let up = k.flags & LLKHF_UP != 0;
     LAST_HOOK_TICK.store(k.time, Ordering::Relaxed);
     let capturing = SHARED.lock().unwrap().capturing;
