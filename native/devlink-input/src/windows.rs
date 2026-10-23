@@ -33,6 +33,9 @@ struct Injected {
     keys: Vec<u16>,
 }
 static INJ: Mutex<Injected> = Mutex::new(Injected { buttons: 0, keys: Vec::new() });
+/// Sub-pixel position of the injected pointer (see `follower_step`), and how many moves were logged since entering.
+static VIRT: Mutex<Option<Virt>> = Mutex::new(None);
+static MOVES_LOGGED: AtomicU32 = AtomicU32::new(0);
 
 fn dpi_aware() {
     DPI.call_once(|| unsafe {
@@ -310,8 +313,16 @@ pub fn inject(cmd: Cmd) {
     match cmd {
         Cmd::Move { dx, dy } => {
             let (x, y) = cursor();
-            let ((nx, ny), hit) = clamp_move(&screens(), (x as f64, y as f64), dx as f64, dy as f64);
-            move_abs(nx, ny);
+            let prev = *VIRT.lock().unwrap();
+            let (v, hit) = follower_step(&screens(), prev, (x, y), dx as f64, dy as f64);
+            *VIRT.lock().unwrap() = Some(v);
+            move_abs(v.pos.0, v.pos.1);
+            // a few lines after each entry, so a pointer that does not move can be diagnosed from the log
+            if MOVES_LOGGED.load(Ordering::Relaxed) < 3 {
+                MOVES_LOGGED.fetch_add(1, Ordering::Relaxed);
+                let (ax, ay) = cursor();
+                log(&format!("follower move ({dx},{dy}): pointer ({x},{y}) asked for ({:.1},{:.1}) now ({ax},{ay})", v.pos.0, v.pos.1));
+            }
             if let Some((side, pos)) = hit {
                 on_injected_edge(side, pos);
             }
@@ -332,6 +343,8 @@ pub fn inject(cmd: Cmd) {
             SCREENS.lock().unwrap().take();
             if let Some((x, y)) = entry_point(&screens(), side, pos) {
                 move_abs(x, y);
+                *VIRT.lock().unwrap() = Some(Virt::at(x, y));
+                MOVES_LOGGED.store(0, Ordering::Relaxed);
             }
         }
         Cmd::ReleaseAll => release_all(),

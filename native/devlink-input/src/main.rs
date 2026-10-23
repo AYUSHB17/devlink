@@ -230,6 +230,34 @@ pub fn clamp_move(screens: &[Rect], from: (f64, f64), dx: f64, dy: f64) -> ((f64
     ((cx, cy), hit)
 }
 
+/// Where an injected pointer is believed to be, in sub-pixel precision, and the pixel we last asked the OS for.
+///
+/// Platforms that move the pointer with absolute coordinates (Windows) keep this. Reading the position back from
+/// the OS before every step loses small steps to the pixel <-> 0..65535 conversion: a 1 px step can land on the
+/// same pixel again and again, so a slowly moved pointer never leaves the spot where it entered.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Virt {
+    pub pos: (f64, f64),
+    pub sent: (i32, i32),
+}
+
+impl Virt {
+    pub fn at(x: f64, y: f64) -> Virt {
+        Virt { pos: (x, y), sent: (x.round() as i32, y.round() as i32) }
+    }
+}
+
+/// One injected relative step. `actual` is where the OS says the pointer is now: our own sub-pixel position is
+/// used unless the real pointer is somewhere else (the local user moved it), in which case we start from there.
+pub fn follower_step(screens: &[Rect], prev: Option<Virt>, actual: (i32, i32), dx: f64, dy: f64) -> (Virt, Option<(Side, f64)>) {
+    let base = match prev {
+        Some(v) if (actual.0 - v.sent.0).abs() <= 3 && (actual.1 - v.sent.1).abs() <= 3 => v.pos,
+        _ => (actual.0 as f64, actual.1 as f64),
+    };
+    let (pos, hit) = clamp_move(screens, base, dx, dy);
+    (Virt::at(pos.0, pos.1), hit)
+}
+
 /// Where the cursor appears when entering through `side` at fraction `pos` along that edge.
 pub fn entry_point(screens: &[Rect], side: Side, pos: f64) -> Option<(f64, f64)> {
     let pos = pos.clamp(0.0, 1.0);
@@ -441,5 +469,75 @@ fn handle(cmd: Cmd) {
         Cmd::Button { b, down } if b <= 4 => platform::inject(Cmd::Button { b, down }),
         Cmd::Button { .. } => {}
         other => platform::inject(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const W: f64 = 1920.0;
+    fn screens() -> Vec<Rect> {
+        vec![Rect { x: 0.0, y: 0.0, w: W, h: 1080.0 }]
+    }
+
+    /// Where a pointer ends up after asking for pixel `x` the way the Windows helper does: pixel -> 0..65535
+    /// (rounded), then the OS converts back with floor(n * width / 65536). This loses a pixel at some positions.
+    fn os_land(x: i32) -> i32 {
+        let n = ((x as f64) * 65535.0 / (W - 1.0)).round();
+        (n * W / 65536.0).floor() as i32
+    }
+
+    #[test]
+    fn reading_the_position_back_every_step_stalls_on_slow_movement() {
+        // documents the problem: the old approach starts each step from the position the OS reports
+        let s = screens();
+        let mut actual = (os_land(2), 540);
+        for _ in 0..50 {
+            let (p, _) = clamp_move(&s, (actual.0 as f64, actual.1 as f64), 1.0, 0.0);
+            actual = (os_land(p.0.round() as i32), 540);
+        }
+        assert!(actual.0 <= 2, "expected the old approach to stay stuck near the entry point, got {}", actual.0);
+    }
+
+    #[test]
+    fn slow_steps_from_the_entry_point_keep_moving() {
+        let s = screens();
+        let mut v = Virt::at(2.0, 540.0); // entry point just inside the left edge
+        let mut actual = (os_land(2), 540);
+        for _ in 0..50 {
+            let (next, hit) = follower_step(&s, Some(v), actual, 1.0, 0.0);
+            assert!(hit.is_none());
+            v = next;
+            actual = (os_land(v.sent.0), 540);
+        }
+        assert!(actual.0 >= 49, "pointer should have advanced about 50 px, got {}", actual.0);
+        assert!((v.pos.0 - 52.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fractional_scaling_is_not_lost() {
+        let s = screens();
+        let mut v = Virt::at(500.0, 500.0);
+        for _ in 0..10 {
+            v = follower_step(&s, Some(v), v.sent, 0.4, 0.0).0;
+        }
+        assert!((v.pos.0 - 504.0).abs() < 1e-9, "10 steps of 0.4 px should add up to 4 px, got {}", v.pos.0);
+    }
+
+    #[test]
+    fn a_pointer_moved_by_someone_else_is_followed() {
+        let s = screens();
+        let v = Virt::at(100.0, 100.0);
+        let (next, _) = follower_step(&s, Some(v), (800, 600), 1.0, 1.0);
+        assert_eq!(next.sent, (801, 601), "should continue from where the pointer really is");
+    }
+
+    #[test]
+    fn running_into_the_screen_edge_is_reported() {
+        let s = screens();
+        let (v, hit) = follower_step(&s, Some(Virt::at(1.0, 540.0)), (1, 540), -5.0, 0.0);
+        assert_eq!(v.sent.0, 0);
+        assert!(matches!(hit, Some((Side::Left, _))));
     }
 }
