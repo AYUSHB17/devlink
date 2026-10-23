@@ -7,6 +7,9 @@ import { FileTransfers } from './files';
 import { PortForwards } from './forward';
 import { RemoteFs } from './remotefs';
 import { InputBackend, InputShare } from './input';
+import { BrowserBridge } from './browser-bridge';
+import { LinkShare } from './links';
+import { ScreenShare } from './screen';
 import { fingerprint, handshake, HandshakeCtx, PeerHello, Session } from './protocol';
 import { SecretBox, Settings, Store } from './store';
 import { StatusReporter } from './status';
@@ -21,6 +24,8 @@ export interface CoreOptions {
   /** native input helper for shared mouse & keyboard (absent in tests) */
   inputBackend?: InputBackend;
   log?: (msg: string) => void;
+  /** opens a received web link in the default browser (absent in tests) */
+  openUrl?: (url: string) => unknown;
 }
 
 export interface PairPrompt {
@@ -41,6 +46,9 @@ export class Core extends EventEmitter {
   readonly forwards: PortForwards;
   readonly status: StatusReporter;
   readonly input: InputShare;
+  readonly links: LinkShare;
+  readonly screen: ScreenShare;
+  readonly bridge: BrowserBridge;
   readonly remotefs: RemoteFs;
   private discovery?: Discovery;
   private discovered = new Map<string, DiscoveredDevice>();
@@ -67,6 +75,9 @@ export class Core extends EventEmitter {
     this.forwards = new PortForwards(this);
     this.status = new StatusReporter(this);
     this.input = new InputShare(this, opts.inputBackend ?? null);
+    this.links = new LinkShare(this, opts.openUrl ?? (() => undefined));
+    this.screen = new ScreenShare(this);
+    this.bridge = new BrowserBridge(this);
     this.remotefs = new RemoteFs(this);
   }
 
@@ -125,6 +136,7 @@ export class Core extends EventEmitter {
     this.clipboard.start();
     this.forwards.start();
     this.status.start();
+    await this.bridge.reconcile();
     this.dialTimer = setInterval(() => this.dialAll(), 4000);
     setTimeout(() => this.dialAll(), 500);
   }
@@ -148,6 +160,8 @@ export class Core extends EventEmitter {
     this.clipboard.stop();
     this.status.stop();
     this.input.stop();
+    this.screen.stopAll();
+    this.bridge.stop();
     this.forwards.stop();
     this.discovery?.stop();
     for (const s of [...this.sessions.values()]) s.close();
@@ -371,6 +385,9 @@ export class Core extends EventEmitter {
       settings: s,
       forwards: this.forwards.snapshot(),
       input: this.input.snapshot(),
+      links: this.links.log,
+      screen: this.screen.snapshot(),
+      bridge: this.bridge.snapshot(),
       remotefs: this.remotefs.snapshot(),
       transfers: this.files.snapshot(),
       clipboardLog: this.clipboard.log,

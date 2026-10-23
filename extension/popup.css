@@ -1,0 +1,6 @@
+body { font: 13px -apple-system, "Segoe UI", sans-serif; width: 260px; margin: 12px; color: #1b1f24; }
+h1 { font-size: 15px; margin: 0 0 8px; }
+button { display: block; width: 100%; margin: 6px 0; padding: 7px; border-radius: 6px; border: 1px solid #ccd; background: #fff; cursor: pointer; font: inherit; }
+button.primary { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+select { width: 100%; margin: 4px 0 6px; padding: 4px; }
+.muted { color: #667085; } .small { font-size: 11px; } .bad { color: #d1344b; } .ok { color: #1a9d55; }

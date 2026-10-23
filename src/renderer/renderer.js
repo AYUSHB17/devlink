@@ -61,6 +61,7 @@ function render(s) {
   renderSettings(s);
   renderScreens(s);
   renderConsent(s);
+  renderSharing(s);
   renderModal(s);
   $('pairing-state').textContent = s.pairing.enabled ? 'Pairing is on – this device can be paired for the next ' + Math.max(1, Math.round((s.pairing.until - Date.now()) / 1000)) + ' s' : '';
   $('btn-allow').textContent = s.pairing.enabled ? 'Stop allowing pairing' : 'Allow pairing for 2 minutes';
@@ -88,6 +89,8 @@ function renderPeers(s) {
               h('button', { disabled: !p.online, onclick: () => call(api.pickAndSend(p.id, false)) }, 'Send files…'),
               h('button', { disabled: !p.online, onclick: () => call(api.pickAndSend(p.id, true)) }, 'Send folder…'),
               h('button', { disabled: !p.online, onclick: () => call(api.pushClipboard(p.id), 'Clipboard sent') }, 'Push clipboard'),
+              h('button', { disabled: !p.online, onclick: () => call(api.viewScreen(p.id)) }, 'View screen'),
+              h('button', { disabled: !p.online, title: 'Send one file and open it there', onclick: () => call(api.pickAndSendOpen(p.id)) }, 'Send & open…'),
               h('button', { class: 'danger', onclick: () => { if (confirm(`Forget ${p.name}? You will need to pair again.`)) call(api.unpair(p.id)); } }, 'Unpair')));
         })
       : [h('div', { class: 'muted' }, 'No paired devices yet. Pair one below.')]));
@@ -240,6 +243,54 @@ function renderScreens(s) {
       : [h('div', { class: 'muted' }, 'Pair a device first.')]));
 }
 
+function renderSharing(s) {
+  const sc = s.screen || { sharingTo: [], viewing: [], prompt: null };
+  // who is viewing this screen
+  $('sharing-status').replaceChildren(
+    ...(sc.sharingTo.length
+      ? [h('div', { class: 'card row' },
+          h('span', { class: 'bad grow' }, `${sc.sharingTo.map((x) => x.peer).join(', ')} ${sc.sharingTo.length > 1 ? 'are' : 'is'} viewing this screen`),
+          h('button', { class: 'primary', onclick: () => call(api.stopScreenSharing()) }, 'Stop sharing'))]
+      : []));
+  // screen consent prompt
+  const m = $('screen-consent-modal');
+  if (sc.prompt) {
+    $('screen-consent-text').textContent = `${sc.prompt.name} wants to see this screen.`;
+    m.classList.remove('hidden');
+  } else m.classList.add('hidden');
+  // links
+  const opts = s.peers.filter((p) => p.online).map((p) => [p.id, p.name]);
+  syncSelect($('link-peer'), opts, $('link-peer').value);
+  $('link-log').replaceChildren(
+    ...(s.links || []).slice(0, 15).map((e) => h('div', { class: 'item' },
+      h('span', { class: 'grow' }, h('span', { class: e.dir === 'in' ? 'ok' : 'muted' }, e.dir === 'in' ? '⬇ from ' : '⬆ to '), e.peer, ' – ', e.url),
+      h('span', { class: e.state === 'refused' ? 'bad small' : 'muted small' }, e.state === 'refused' ? e.note || 'refused' : e.state))));
+  // settings extras
+  for (const k of ['acceptLinks', 'openSentFiles', 'allowScreenView', 'browserBridge']) setIfIdle('set-' + k, !!s.settings[k], 'checked');
+  $('tab-hotkey').textContent = s.self.os === 'macOS' ? 'Cmd+Option+Shift+L' : 'Ctrl+Alt+Shift+L';
+  $('screen-perm').replaceChildren(
+    ...(s.self.os === 'macOS' && s.settings.allowScreenView
+      ? [h('span', { class: 'muted' }, 'macOS also needs Screen Recording permission for Electron.'), h('button', { onclick: () => call(api.openScreenPrivacy()) }, 'Open Screen Recording')]
+      : []));
+  const b = s.bridge || {};
+  $('bridge-info').replaceChildren(
+    ...(s.settings.browserBridge
+      ? [h('div', { class: b.running ? 'ok' : 'bad' }, b.running ? `Listening on 127.0.0.1:${b.port}` : b.error || 'not running'),
+         h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Extension token:'), h('code', {}, s.settings.browserBridgeToken),
+           h('button', { onclick: () => call(api.copy(s.settings.browserBridgeToken), 'Token copied') }, 'Copy'),
+           h('button', { onclick: () => call(api.newBridgeToken(), 'New token – paste it into the extension again') }, 'New token')),
+         h('div', { class: 'muted' }, 'Install the extension from the project folder: chrome://extensions (or edge://extensions) → Developer mode → Load unpacked → choose devlink/extension, then paste this token in its options.')]
+      : []));
+}
+$('screen-consent-yes').onclick = () => call(api.answerScreenConsent(true));
+$('screen-consent-no').onclick = () => call(api.answerScreenConsent(false));
+$('link-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const peer = $('link-peer').value;
+  if (!peer) return toast('No device is connected', true);
+  if (await call(api.sendLink(peer, $('link-url').value.trim()), 'Link sent')) $('link-url').value = '';
+};
+
 function renderConsent(s) {
   const p = s.input && s.input.consentPrompt;
   const m = $('consent-modal');
@@ -276,7 +327,7 @@ $('shortcut-form').onsubmit = async (e) => {
   e.preventDefault();
   if (await call(api.saveShortcut($('sc-label').value, $('sc-command').value))) { $('sc-label').value = ''; $('sc-command').value = ''; }
 };
-for (const key of ['clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'inputSharing', 'allowRemoteInput', 'clipboardOnCross', 'edgeDrop', 'swapCmdCtrl', 'invertScroll'])
+for (const key of ['clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'inputSharing', 'allowRemoteInput', 'clipboardOnCross', 'edgeDrop', 'swapCmdCtrl', 'invertScroll', 'acceptLinks', 'openSentFiles', 'allowScreenView', 'browserBridge'])
   $('set-' + key).onchange = (e) => call(api.updateSettings({ [key]: e.target.checked }));
 $('set-deviceName').onchange = (e) => e.target.value.trim() && call(api.updateSettings({ deviceName: e.target.value.trim() }), 'Saved – restart to re-announce the new name');
 $('set-pointerScale').onchange = (e) => { const n = parseFloat(e.target.value); if (n >= 0.25 && n <= 4) call(api.updateSettings({ pointerScale: n })); };

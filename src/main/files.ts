@@ -18,6 +18,8 @@ export interface Transfer {
   error?: string;
   /** where received data landed (incoming only) */
   path?: string;
+  /** sender asked for "Send & open" */
+  open?: boolean;
   ts: number;
 }
 
@@ -118,7 +120,7 @@ export class FileTransfers {
   // ------------------------------------------------------------ sending
 
   /** Sends files and folders to a connected peer. Resolves when all data has been handed to the socket. */
-  async sendPaths(peerId: string, paths: string[]): Promise<void> {
+  async sendPaths(peerId: string, paths: string[], opts: { open?: boolean } = {}): Promise<void> {
     const session = this.core.sessions.get(peerId);
     if (!session) throw new Error('device is offline');
     for (const p of paths) {
@@ -164,6 +166,7 @@ export class FileTransfers {
             batchName: root,
             batchFiles: files.length,
             batchBytes: t.bytes,
+            open: opts.open === true,
           });
           const head = Buffer.alloc(4);
           head.writeUInt32BE(fid, 0);
@@ -288,6 +291,7 @@ export class FileTransfers {
           bytesDone: 0,
           state: 'active',
           path: uniquePath(path.join(root, segs[0])),
+          open: msg.open === true,
           ts: Date.now(),
         };
         this.transfers.set(batchKey, t);

@@ -5,4 +5,5 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 contextBridge.exposeInMainWorld('strip', {
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   drop: (paths: string[]) => ipcRenderer.invoke('strip:drop', paths),
+  dropLinks: (urls: string[]) => ipcRenderer.invoke('strip:links', urls),
 });
