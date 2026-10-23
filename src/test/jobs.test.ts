@@ -295,7 +295,8 @@ describe('jobs: between two paired devices', () => {
         return true;
       }
     }, 8000, 'process to exit');
-    assert.ok(B.jobs.snapshot().audit.some((e) => e.outcome === 'device disconnected'));
+    // the audit entry is written when the killed process's close event fires, a moment after it is gone
+    await waitFor(() => B.jobs.snapshot().audit.some((e) => e.outcome === 'device disconnected'), 8000, 'audit entry');
     // the audit file keeps the record on disk
     assert.match(fs.readFileSync(path.join(tmp, 'worker', 'cfg', 'jobs-audit.log'), 'utf8'), /device disconnected/);
   });
