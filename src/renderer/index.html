@@ -49,6 +49,14 @@
           <input id="pair-port" placeholder="port" size="6" value="47821" autocomplete="off" />
           <button type="submit">Pair</button>
         </form>
+        <h3>Away from this network</h3>
+        <p class="muted small">Over Tailscale or another VPN, give a paired device a second address. DevLink tries it when the usual one fails. Leave the address empty to clear it.</p>
+        <form id="alt-form" class="row">
+          <select id="alt-peer"></select>
+          <input id="alt-host" placeholder="100.x.y.z" autocomplete="off" />
+          <input id="alt-port" placeholder="port" size="6" value="47821" autocomplete="off" />
+          <button type="submit">Save</button>
+        </form>
       </div>
     </section>
 

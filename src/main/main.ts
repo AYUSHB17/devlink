@@ -162,6 +162,10 @@ function registerIpc(): void {
   });
   handle('pair:answer', (ok: boolean) => core.answerPair(!!ok));
   handle('unpair', (id: string) => core.unpair(id));
+  handle('peer:alt', (id: string, host: string, port: number) => {
+    if (typeof id !== 'string' || typeof host !== 'string') throw new Error('bad request');
+    core.setAltAddress(id, host, port);
+  });
   handle('settings', (patch: Record<string, unknown>) => {
     const allowed = ['deviceName', 'clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'listenPort'];
     const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop', 'acceptLinks', 'openSentFiles', 'allowScreenView', 'allowJobs', 'browserBridge'];

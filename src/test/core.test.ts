@@ -29,14 +29,14 @@ async function waitFor(cond: () => boolean, ms = 8000, what = 'condition') {
 }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'devlink-test-'));
-function mk(name: string) {
+function mk(name: string, base = tmp) {
   const clip = new FakeClipboard();
   const core = new Core({
-    dir: path.join(tmp, name, 'cfg'),
+    dir: path.join(base, name, 'cfg'),
     clipboard: clip,
     discovery: false,
     log: process.env.DL_DEBUG ? (m: string) => console.log(Date.now() % 100000, name, m) : undefined,
-    defaults: { deviceName: name, listenPort: 0, downloadsDir: path.join(tmp, name, 'dl'), acceptFiles: true, allowForwarding: true },
+    defaults: { deviceName: name, listenPort: 0, downloadsDir: path.join(base, name, 'dl'), acceptFiles: true, allowForwarding: true },
   });
   return { core, clip };
 }
@@ -215,4 +215,91 @@ describe('defaults', () => {
     assert.equal(st.settings.acceptFiles, false);
     assert.equal(st.settings.allowForwarding, false);
   });
+});
+
+describe('alternate address (away from the LAN)', () => {
+  // own directory: the suite above deletes the shared one when it finishes
+  const altTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'devlink-alt-'));
+  const C = mk('gamma', altTmp);
+  const D = mk('delta', altTmp);
+  let deadPort = 0;
+
+  before(async () => {
+    await C.core.start();
+    await D.core.start();
+    // a port nothing listens on, standing in for a LAN address that is unreachable from here
+    const probe = net.createServer();
+    await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
+    deadPort = (probe.address() as net.AddressInfo).port;
+    await new Promise((r) => probe.close(r));
+
+    C.core.on('pair-prompt', () => C.core.answerPair(true));
+    D.core.on('pair-prompt', () => D.core.answerPair(true));
+    C.core.startPairing();
+    await D.core.pairWith('127.0.0.1', C.core.listenPort);
+    await waitFor(() => C.core.sessions.size === 1 && D.core.sessions.size === 1, 8000, 'paired');
+  });
+  after(async () => {
+    await C.core.stop();
+    await D.core.stop();
+    fs.rmSync(altTmp, { recursive: true, force: true });
+  });
+
+  test('candidates are ordered, de-duplicated and skip empty entries', () => {
+    const peer = { id: 'x', pub: '', name: 'x', os: '', pairedAt: 0 };
+    assert.deepEqual(C.core.dialCandidates(peer), []);
+    const both = { ...peer, lastHost: '192.168.1.5', lastPort: 47821, altHost: '100.64.0.9', altPort: 47821 };
+    assert.deepEqual(C.core.dialCandidates(both), [
+      { host: '192.168.1.5', port: 47821 },
+      { host: '100.64.0.9', port: 47821 },
+    ]);
+    assert.equal(C.core.dialCandidates({ ...both, altHost: '192.168.1.5' }).length, 1);
+  });
+
+  test('validates the alternate address', () => {
+    const id = D.core.id;
+    assert.throws(() => C.core.setAltAddress(id, 'bad host; rm', 1), /IP address or host name/);
+    assert.throws(() => C.core.setAltAddress(id, '100.64.0.9', 0), /port/);
+    assert.throws(() => C.core.setAltAddress('nope', '100.64.0.9', 1), /unknown device/);
+  });
+
+  test('connects through the alternate address when the stored LAN address is dead', async () => {
+    // Both sides only know a dead address, so only the alternate address can bring the link back.
+    const cRec = C.core.store.getPeer(D.core.id)!;
+    const dRec = D.core.store.getPeer(C.core.id)!;
+    D.core.store.putPeer({ ...dRec, lastHost: '127.0.0.1', lastPort: deadPort });
+    C.core.store.putPeer({ ...cRec, lastHost: '127.0.0.1', lastPort: deadPort });
+    C.core.sessions.get(D.core.id)!.close();
+    await waitFor(() => C.core.sessions.size === 0 && D.core.sessions.size === 0, 3000, 'drop');
+    await new Promise((r) => setTimeout(r, 4500));
+    assert.equal(C.core.sessions.size, 0, 'without an alternate address the dead address keeps it offline');
+
+    C.core.setAltAddress(D.core.id, '127.0.0.1', D.core.listenPort);
+    assert.equal(C.core.state().peers[0].altAddress, `127.0.0.1:${D.core.listenPort}`);
+    await waitFor(() => C.core.sessions.size === 1 && D.core.sessions.size === 1, 15000, 'reconnect via alternate');
+    assert.deepEqual(C.core.dialCandidates(C.core.store.getPeer(D.core.id)!)[0], { host: '127.0.0.1', port: D.core.listenPort });
+  });
+
+  test('clearing the alternate address removes it', () => {
+    C.core.setAltAddress(D.core.id, '', 0);
+    const rec = C.core.store.getPeer(D.core.id)!;
+    assert.equal(rec.altHost, undefined);
+    assert.equal(rec.altPort, undefined);
+  });
+});
+
+describe('screen-view ICE filter', () => {
+  // the filter is plain browser JS duplicated in two files; load each and run the same cases
+  for (const file of ['screen-view.js', 'screen-send.js']) {
+    test(`${file} accepts LAN and Tailscale (100.64.0.0/10) addresses only`, () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', file), 'utf8');
+      const fn = src.slice(src.indexOf('function lanCandidate'), src.indexOf('\n}\n', src.indexOf('function lanCandidate')) + 2);
+      const lan = new Function(`${fn}; return lanCandidate;`)() as (c: { candidate: string }) => boolean;
+      const cand = (addr: string) => ({ candidate: `candidate:1 1 udp 2122260223 ${addr} 50000 typ host` });
+      for (const ok of ['192.168.1.4', '10.0.0.2', '172.16.0.1', '100.64.0.1', '100.101.102.103', '100.127.255.254', 'fd7a:115c:a1e0::1'])
+        assert.equal(lan(cand(ok)), true, ok);
+      for (const bad of ['8.8.8.8', '100.63.255.255', '100.128.0.1', '172.32.0.1', '203.0.113.7', '2001:db8::1'])
+        assert.equal(lan(cand(bad)), false, bad);
+    });
+  }
 });

@@ -12,7 +12,7 @@ import { BrowserBridge } from './browser-bridge';
 import { LinkShare } from './links';
 import { ScreenShare } from './screen';
 import { fingerprint, handshake, HandshakeCtx, PeerHello, Session } from './protocol';
-import { SecretBox, Settings, Store } from './store';
+import { PeerRecord, SecretBox, Settings, Store } from './store';
 import { StatusReporter } from './status';
 
 export interface CoreOptions {
@@ -56,6 +56,8 @@ export class Core extends EventEmitter {
   private discovered = new Map<string, DiscoveredDevice>();
   private server?: net.Server;
   private dialing = new Set<string>();
+  /** In-memory only: the address that last connected, tried first so a dead LAN address doesn't cost a timeout every cycle. */
+  private workedAddr = new Map<string, string>();
   private dialTimer?: NodeJS.Timeout;
   private jsonHandlers = new Map<string, JsonHandler>();
   private binHandlers = new Map<number, BinHandler>();
@@ -247,22 +249,59 @@ export class Core extends EventEmitter {
     return r.peer;
   }
 
+  /** Addresses to try for a paired peer, best first: whatever worked last, then mDNS, last known, and the user's alternate. */
+  dialCandidates(p: PeerRecord): { host: string; port: number }[] {
+    const d = this.discovered.get(p.id);
+    const list = [
+      { host: d?.host, port: d?.port },
+      { host: p.lastHost, port: p.lastPort },
+      { host: p.altHost, port: p.altPort },
+    ].filter((c): c is { host: string; port: number } => !!c.host && !!c.port);
+    const seen = new Set<string>();
+    const uniq = list.filter((c) => !seen.has(`${c.host}:${c.port}`) && !!seen.add(`${c.host}:${c.port}`));
+    const worked = this.workedAddr.get(p.id);
+    return uniq.sort((a, b) => Number(`${b.host}:${b.port}` === worked) - Number(`${a.host}:${a.port}` === worked));
+  }
+
+  /** Set or clear (host = '') the alternate address for a paired device. */
+  setAltAddress(peerId: string, host: string, port: number): void {
+    const p = this.store.getPeer(peerId);
+    if (!p) throw new Error('unknown device');
+    host = host.trim();
+    if (!host) {
+      this.store.putPeer({ ...p, altHost: undefined, altPort: undefined });
+    } else {
+      if (!/^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host)) throw new Error('enter an IP address or host name');
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('enter a port between 1 and 65535');
+      this.store.putPeer({ ...p, altHost: host, altPort: port });
+    }
+    this.changed();
+  }
+
   private dialAll(): void {
     for (const p of this.store.peers) {
       if (this.sessions.has(p.id) || this.dialing.has(p.id)) continue;
-      const d = this.discovered.get(p.id);
-      const host = d?.host ?? p.lastHost;
-      const port = d?.port ?? p.lastPort;
-      if (!host || !port) continue;
+      if (!this.dialCandidates(p).length) continue;
       this.dialing.add(p.id);
       setTimeout(async () => {
         try {
-          if (this.sessions.has(p.id) || !this.store.getPeer(p.id)) return;
-          const sock = await this.connect(host, port);
-          const r = await handshake(sock, 'initiator', this.ctx({ mode: 'normal', expectId: p.id }));
-          this.adopt(r.session);
-        } catch (e: any) {
-          this.lastError = `${p.name}: ${e.reason ?? e.message}`;
+          // re-read: addresses may have changed while waiting, and the peer may have been unpaired
+          const cur = this.store.getPeer(p.id);
+          if (this.sessions.has(p.id) || !cur) return;
+          let lastErr: any;
+          for (const c of this.dialCandidates(cur)) {
+            try {
+              const sock = await this.connect(c.host, c.port);
+              const r = await handshake(sock, 'initiator', this.ctx({ mode: 'normal', expectId: p.id }));
+              this.workedAddr.set(p.id, `${c.host}:${c.port}`);
+              this.adopt(r.session);
+              return;
+            } catch (e: any) {
+              lastErr = e;
+              if (this.sessions.has(p.id)) return;
+            }
+          }
+          if (lastErr) this.lastError = `${p.name}: ${lastErr.reason ?? lastErr.message}`;
         } finally {
           this.dialing.delete(p.id);
           this.changed();
@@ -384,6 +423,7 @@ export class Core extends EventEmitter {
         fingerprint: fingerprint(p.id),
         online: this.sessions.has(p.id),
         address: p.lastHost ? `${p.lastHost}:${p.lastPort ?? '?'}` : '',
+        altAddress: p.altHost ? `${p.altHost}:${p.altPort}` : '',
         status: this.status.get(p.id) ?? null,
       })),
       settings: s,

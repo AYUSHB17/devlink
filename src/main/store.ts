@@ -10,6 +10,9 @@ export interface PeerRecord {
   os: string;
   lastHost?: string;
   lastPort?: number;
+  /** Address to try when the LAN address fails, e.g. a Tailscale/ZeroTier IP. Set by the user, never by mDNS. */
+  altHost?: string;
+  altPort?: number;
   pairedAt: number;
 }
 

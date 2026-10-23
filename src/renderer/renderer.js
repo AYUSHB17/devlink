@@ -54,6 +54,7 @@ function render(s) {
   $('self-fp').textContent = s.self.fingerprint;
   renderPeers(s);
   renderDiscovered(s);
+  renderAlt(s);
   renderClipboard(s);
   renderFiles(s);
   renderPorts(s);
@@ -94,6 +95,14 @@ function renderPeers(s) {
               h('button', { class: 'danger', onclick: () => { if (confirm(`Forget ${p.name}? You will need to pair again.`)) call(api.unpair(p.id)); } }, 'Unpair')));
         })
       : [h('div', { class: 'muted' }, 'No paired devices yet. Pair one below.')]));
+}
+
+function renderAlt(s) {
+  const sel = $('alt-peer');
+  if (document.activeElement === sel || document.activeElement === $('alt-host') || document.activeElement === $('alt-port')) return;
+  const keep = sel.value;
+  sel.replaceChildren(...s.peers.map((p) => h('option', { value: p.id }, p.name + (p.altAddress ? ' (' + p.altAddress + ')' : ''))));
+  if (s.peers.some((p) => p.id === keep)) sel.value = keep;
 }
 
 function renderDiscovered(s) {
@@ -314,6 +323,13 @@ function renderModal(s) {
 
 // ------------------------------------------------------------ events
 $('btn-allow').onclick = () => call(state && state.pairing.enabled ? api.stopPairing() : api.startPairing());
+$('alt-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const id = $('alt-peer').value;
+  if (!id) return toast('Pair a device first', true);
+  const host = $('alt-host').value.trim();
+  if (await call(api.setAltAddress(id, host, parseInt($('alt-port').value, 10)), host ? 'Alternate address saved' : 'Alternate address cleared')) $('alt-host').value = '';
+};
 $('manual-pair').onsubmit = (e) => { e.preventDefault(); doPair($('pair-host').value.trim(), parseInt($('pair-port').value, 10)); };
 $('modal-yes').onclick = () => call(api.answerPair(true));
 $('modal-no').onclick = () => call(api.answerPair(false));

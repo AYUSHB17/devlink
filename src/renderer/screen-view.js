@@ -1,12 +1,13 @@
 'use strict';
-// Only accept ICE candidates on the local network (private, link-local, loopback or mDNS .local names).
+// Only accept ICE candidates on the local network or a private overlay such as Tailscale (private, CGNAT 100.64.0.0/10,
+// link-local, loopback or mDNS .local names).
 function lanCandidate(c) {
   const parts = String((c && c.candidate) || '').split(' ');
   const addr = (parts[4] || '').toLowerCase();
   if (/^[0-9a-f-]+\.local$/.test(addr)) return true; // Chromium mDNS host name
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) {
     const [a, b] = addr.split('.').map(Number);
-    return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31);
+    return a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31);
   }
   // IPv6 literal only (hex groups and colons)
   if (!/^[0-9a-f:]+$/.test(addr) || !addr.includes(':')) return false;

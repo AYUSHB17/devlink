@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('devlink', {
   pairWith: (host: string, port: number) => invoke('pair:with', host, port),
   answerPair: (ok: boolean) => invoke('pair:answer', ok),
   unpair: (id: string) => invoke('unpair', id),
+  setAltAddress: (id: string, host: string, port: number) => invoke('peer:alt', id, host, port),
   updateSettings: (patch: Record<string, unknown>) => invoke('settings', patch),
   chooseDownloads: () => invoke('settings:downloads'),
   sendPaths: (peerId: string, paths: string[]) => invoke('files:send', peerId, paths),
