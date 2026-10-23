@@ -283,7 +283,7 @@ export class InputShare extends EventEmitter {
       case 'local_activity':
         if (this.m.mode === 'following') {
           this.core.send(this.m.peer, { t: 'input-takeback' });
-          this.release('', true);
+          this.release('', true, 'local mouse/keyboard activity on this machine');
         }
         break;
     }
@@ -300,6 +300,7 @@ export class InputShare extends EventEmitter {
         return;
       }
       this.notice = ''; // a message about the previous session must not linger beside the new one
+      this.core.log(`input: local -> leading (crossed the ${side} edge at ${pos.toFixed(2)})`);
       this.m = { mode: 'leading', peer, acked: false };
       this.startHeartbeat();
       this.backend?.send({ cmd: 'capture', on: true });
@@ -311,6 +312,7 @@ export class InputShare extends EventEmitter {
     } else if (this.m.mode === 'following') {
       const leader = this.m.peer;
       if (this.settings.inputLayout?.[leader] !== side) return;
+      this.core.log(`input: following -> local (cursor hit the ${side} edge facing the leader, pos ${pos.toFixed(2)})`);
       this.core.send(leader, { t: 'input-leave', pos });
       this.backend?.send({ cmd: 'release_all' });
       this.m = { mode: 'local' };
@@ -337,8 +339,9 @@ export class InputShare extends EventEmitter {
   }
 
   /** Return to `local`. `releaseKeys` lets go of anything we injected (follower side). */
-  private release(reason: string, releaseKeys: boolean): void {
+  private release(reason: string, releaseKeys: boolean, why = ''): void {
     const was = this.m;
+    this.core.log(`input: ${was.mode} -> local (${reason || why || 'no reason given'})`);
     if (this.ackTimer) clearTimeout(this.ackTimer);
     this.flushMoves();
     if (was.mode === 'leading') this.backend?.send({ cmd: 'capture', on: false });
@@ -399,6 +402,7 @@ export class InputShare extends EventEmitter {
           return deny('waiting for approval on that device – click Allow there, then move the cursor across again');
         }
         this.notice = '';
+        this.core.log(`input: local -> following (entered from the ${side} edge at ${clamp01(Number(msg.pos)).toFixed(2)})`);
         this.m = { mode: 'following', peer: peerId };
         this.startHeartbeat();
         this.rate = { windowStart: Date.now(), n: 0 };
@@ -436,15 +440,15 @@ export class InputShare extends EventEmitter {
       case 'input-leave':
         if (this.m.mode === 'leading' && this.m.peer === peerId) {
           const side = this.settings.inputLayout?.[peerId];
-          this.release('', false);
+          this.release('', false, 'the other device handed the cursor back');
           if (side) this.backend?.send({ cmd: 'enter', side, pos: clamp01(Number(msg.pos)) });
         }
         break;
       case 'input-takeback':
-        if (this.m.mode === 'leading' && this.m.peer === peerId) this.release('', false);
+        if (this.m.mode === 'leading' && this.m.peer === peerId) this.release('', false, 'the other device took control back (activity there)');
         break;
       case 'input-release':
-        if (this.m.mode === 'following' && this.m.peer === peerId) this.release('', true);
+        if (this.m.mode === 'following' && this.m.peer === peerId) this.release('', true, 'the leader released control');
         break;
     }
   }
