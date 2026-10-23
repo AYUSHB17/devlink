@@ -35,6 +35,15 @@ contextBridge.exposeInMainWorld('devlink', {
   stopScreenSharing: () => invoke('screen:stopAll'),
   openScreenPrivacy: () => invoke('screen:privacy'),
   newBridgeToken: () => invoke('bridge:newToken'),
+  jobs: {
+    workspaces: (peerId: string) => invoke('jobs:workspaces', peerId),
+    run: (peerId: string, ws: string, cwd: string, command: string) => invoke('jobs:run', peerId, ws, cwd, command),
+    cancel: (id: string) => invoke('jobs:cancel', id),
+    answer: (id: string, decision: string) => invoke('jobs:answer', id, decision),
+    stop: (id: string) => invoke('jobs:stop', id),
+    addWorkspace: () => invoke('jobs:addWorkspace'),
+    removeWorkspace: (id: string) => invoke('jobs:removeWorkspace', id),
+  },
   rfs: {
     enable: (on: boolean) => invoke('rfs:enable', on),
     share: (writable: boolean) => invoke('rfs:share', writable),

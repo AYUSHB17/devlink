@@ -39,6 +39,8 @@ export interface Settings {
   /** let paired devices view this machine's screen (each connection still asks) */
   allowScreenView: boolean;
   /** local bridge for the browser extension (127.0.0.1 only, token protected) */
+  /** let paired devices run programs in this machine's job workspaces (each job still needs approval here) */
+  allowJobs: boolean;
   browserBridge: boolean;
   browserBridgePort: number;
   browserBridgeToken: string;
@@ -124,6 +126,7 @@ export class Store {
         acceptLinks: false,
         openSentFiles: false,
         allowScreenView: false,
+        allowJobs: false,
         browserBridge: false,
         browserBridgePort: 47823,
         browserBridgeToken: '',

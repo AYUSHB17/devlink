@@ -6,6 +6,7 @@ import { Discovery, DiscoveredDevice } from './discovery';
 import { FileTransfers } from './files';
 import { PortForwards } from './forward';
 import { RemoteFs } from './remotefs';
+import { Jobs } from './jobs';
 import { InputBackend, InputShare } from './input';
 import { BrowserBridge } from './browser-bridge';
 import { LinkShare } from './links';
@@ -50,6 +51,7 @@ export class Core extends EventEmitter {
   readonly screen: ScreenShare;
   readonly bridge: BrowserBridge;
   readonly remotefs: RemoteFs;
+  readonly jobs: Jobs;
   private discovery?: Discovery;
   private discovered = new Map<string, DiscoveredDevice>();
   private server?: net.Server;
@@ -79,6 +81,7 @@ export class Core extends EventEmitter {
     this.screen = new ScreenShare(this);
     this.bridge = new BrowserBridge(this);
     this.remotefs = new RemoteFs(this);
+    this.jobs = new Jobs(this);
   }
 
   get id(): string {
@@ -162,6 +165,7 @@ export class Core extends EventEmitter {
     this.input.stop();
     this.screen.stopAll();
     this.bridge.stop();
+    this.jobs.stopAll();
     this.forwards.stop();
     this.discovery?.stop();
     for (const s of [...this.sessions.values()]) s.close();
@@ -389,6 +393,7 @@ export class Core extends EventEmitter {
       screen: this.screen.snapshot(),
       bridge: this.bridge.snapshot(),
       remotefs: this.remotefs.snapshot(),
+      jobs: this.jobs.snapshot(),
       transfers: this.files.snapshot(),
       clipboardLog: this.clipboard.log,
       shortcuts: this.store.shortcuts,

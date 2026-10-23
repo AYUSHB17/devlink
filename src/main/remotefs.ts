@@ -65,7 +65,7 @@ export function safeSegments(rel: unknown): string[] {
   return segs;
 }
 
-function isInside(root: string, target: string): boolean {
+export function isInside(root: string, target: string): boolean {
   const rel = path.relative(root, target);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

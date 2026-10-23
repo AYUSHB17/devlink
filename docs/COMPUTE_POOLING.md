@@ -1,7 +1,7 @@
 # Compute pooling: using both machines' CPU and RAM (design draft)
 
-Status: draft for discussion. Nothing here is built. Items marked **(verify)** are from background knowledge and must
-be checked before relying on them. Companion to [INPUT_SHARING.md](INPUT_SHARING.md),
+Status: **phase 1 is built in part** (see "Phase 1 status" below); everything else is still a draft. Items marked
+**(verify)** are from background knowledge and must be checked before relying on them. Companion to [INPUT_SHARING.md](INPUT_SHARING.md),
 [INPUT_SHARING_SECURITY.md](INPUT_SHARING_SECURITY.md) and the Remote files feature (`src/main/remotefs.ts`).
 
 ## 1. Goal and what is out of scope
@@ -58,6 +58,35 @@ available as a fallback (the Shortcuts tab already suggests `ssh user@ip`) and a
 
 Phase 1 alone delivers most of the practical "one bigger computer" feeling for developers: start a heavy job from
 either machine and have the stronger one run it while you keep working.
+
+### Phase 1 status (`src/main/jobs.ts`, Run tab, `src/test/jobs.test.ts`)
+
+Built and tested between two cores on one Windows machine (real sockets, real child processes), including `npm`
+through the Windows `.cmd` shim:
+
+* Off by default (`allowJobs`). The worker's user adds **workspace** folders; a job can only run inside one.
+* Every job needs approval in the worker's own window: **once** or **for this connection** (memory only, cleared on
+  disconnect). Approval is ignored while another device is driving that machine's input.
+* No shell: a job is an argument vector. On Windows, `.cmd`/`.bat` targets (npm, yarn) need `cmd.exe`, so their
+  arguments are limited to `[A-Za-z0-9_@+=:,./\-]`; anything else is refused (`unsafe-for-cmd`).
+* Environment is a fixed list (requester may only set `CI`, `NODE_ENV`, `FORCE_COLOR`, `NO_COLOR`, `TZ`).
+* Limits: 600 s default and 3600 s maximum wall time, 4 MB output, 2 running jobs, 5 waiting. The job dies with the
+  connection. Audit log in memory (Run tab) and `jobs-audit.log` in the config folder.
+* The job runs **as the logged-in user, unsandboxed; CPU and memory are not limited.**
+
+Not built yet, in the order I would do them:
+
+1. **Project files.** The job runs in a folder that already exists on the worker (e.g. the same git repo). The
+   one-way snapshot sync from section 3 is not written, so uncommitted local edits do not travel unless the folder
+   is also a writable Remote files share.
+2. **A command-line entry point** (`devlink run -- npm test`). Today it is the Run tab and the `Core.jobs.run()` API.
+   A CLI or MCP server needs a local control socket in the app, with its own authentication.
+3. **A separate connection for jobs** (section 6.3). Jobs share the one session, so a chatty job can delay input
+   events. Output is size-capped and backpressured, which limits but does not remove this.
+4. **CPU and memory limits and containers** (phase 2). Job Objects on Windows and a container or `ulimit` on macOS.
+5. **Not verified:** macOS (process-group kill, `PATH` inheritance from a GUI app), real Mac to Windows over Wi-Fi,
+   the symlink-escape test (skipped on this machine: creating symlinks needs Developer Mode), and clicking through
+   the approval dialog by hand (only the UI boot smoke test ran).
 
 ## 5. Wire protocol sketch (`job-` prefix)
 

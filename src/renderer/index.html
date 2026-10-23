@@ -17,6 +17,7 @@
       <button data-view="clipboard">Clipboard</button>
       <button data-view="files">Files</button>
       <button data-view="remotefiles">Remote files</button>
+      <button data-view="jobs">Run</button>
       <button data-view="ports">Ports</button>
       <button data-view="shortcuts">Shortcuts</button>
       <button data-view="settings">Settings</button>
@@ -104,6 +105,8 @@
 
     <section id="view-remotefiles" class="view"></section>
 
+    <section id="view-jobs" class="view"></section>
+
     <section id="view-ports" class="view">
       <h1>Port forwarding</h1>
       <p class="muted">Reach a service on the other machine as <code>localhost</code> here – e.g. forward local 3000 to the other machine's dev server on 3000.</p>
@@ -186,5 +189,6 @@
   <div id="toast" class="toast hidden"></div>
   <script src="renderer.js"></script>
   <script src="remotefiles.js"></script>
+  <script src="jobs.js"></script>
 </body>
 </html>

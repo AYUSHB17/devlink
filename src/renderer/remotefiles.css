@@ -5,3 +5,8 @@
 #view-remotefiles a.dirlink:hover { color: var(--accent); }
 #view-remotefiles .list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 #view-remotefiles details { margin-top: 10px; }
+
+/* Run tab */
+#view-jobs .col { display: flex; flex-direction: column; gap: 10px; }
+.job-output { background: var(--chip); border-radius: 6px; padding: 8px 10px; margin: 8px 0 0; max-height: 280px; overflow: auto; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+#job-consent-modal .dialog { width: 520px; max-width: 92vw; }

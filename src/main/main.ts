@@ -9,6 +9,7 @@ import { ControlBanner } from './control-banner';
 import { EdgeStrips, stripPage } from './edge-strip';
 import { findHelper, HelperProcess } from './input-helper';
 import { cleanUrl } from './links';
+import { parseArgv } from './jobs';
 import { ScreenWindows } from './screen-windows';
 import { SecretBox } from './store';
 import { registerRemoteFsIpc } from './remotefs-ipc';
@@ -163,7 +164,7 @@ function registerIpc(): void {
   handle('unpair', (id: string) => core.unpair(id));
   handle('settings', (patch: Record<string, unknown>) => {
     const allowed = ['deviceName', 'clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'listenPort'];
-    const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop', 'acceptLinks', 'openSentFiles', 'allowScreenView', 'browserBridge'];
+    const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop', 'acceptLinks', 'openSentFiles', 'allowScreenView', 'allowJobs', 'browserBridge'];
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (k in patch) clean[k] = patch[k];
     for (const k of bools) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
@@ -172,6 +173,7 @@ function registerIpc(): void {
     core.store.updateSettings(clean);
     core.input.announce();
     core.screen.settingsChanged();
+    core.jobs.settingsChanged();
     void core.bridge.reconcile();
     core.changed();
   });
@@ -203,6 +205,21 @@ function registerIpc(): void {
   handle('screen:privacy', () => {
     if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
   });
+  handle('jobs:workspaces', (peerId: string) => core.jobs.remoteWorkspaces(String(peerId)));
+  handle('jobs:run', (peerId: string, ws: string, cwd: string, command: string) => {
+    const argv = parseArgv(String(command));
+    return core.jobs.run(String(peerId), { ws: String(ws), cwd: String(cwd || ''), argv }).id;
+  });
+  handle('jobs:cancel', (id: string) => core.jobs.cancel(String(id)));
+  // approving a job happens in this machine's own window; Jobs ignores it while another device is driving this machine
+  handle('jobs:answer', (id: string, decision: string) => core.jobs.answer(String(id), decision === 'session' ? 'session' : decision === 'once' ? 'once' : 'deny'));
+  handle('jobs:stop', (id: string) => core.jobs.stop(String(id)));
+  handle('jobs:addWorkspace', async () => {
+    const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return core.jobs.addWorkspace(r.filePaths[0]).name;
+  });
+  handle('jobs:removeWorkspace', (id: string) => core.jobs.removeWorkspace(String(id)));
   handle('bridge:newToken', () => {
     core.bridge.newToken();
     core.changed();
@@ -295,6 +312,12 @@ app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock?.bounce('informational');
     else win?.flashFrame(true);
     notify('DevLink', `${peerName} wants to view this screen – answer in DevLink`);
+  });
+  core.jobs.on('consent', (peerName: string) => {
+    // ask for attention without stealing focus: a peer must not be able to pull this window forward
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win?.flashFrame(true);
+    notify('DevLink', `${peerName} wants to run a program here – answer in DevLink`);
   });
   // "send this tab": the front browser tab (macOS) or a link on the clipboard, to the device beside this one
   const hotkey = 'CommandOrControl+Alt+Shift+L';
