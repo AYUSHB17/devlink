@@ -9,6 +9,7 @@ import type { Core } from './core';
 export class ControlBanner {
   private win: BrowserWindow | null = null;
   private shownFor: string | null = null;
+  private destroyed = false;
 
   constructor(private core: Core, private rendererDir: string) {
     core.on('changed', () => this.update());
@@ -17,9 +18,12 @@ export class ControlBanner {
   private update(): void {
     const snap = this.core.input.snapshot();
     const peer = snap.mode === 'following' ? snap.peer : null;
-    if (peer === this.shownFor) return;
+    if (peer === this.shownFor || this.destroyed) return;
     this.shownFor = peer;
-    if (!peer) return void this.win?.hide();
+    if (!peer) {
+      if (this.win && !this.win.isDestroyed()) this.win.hide();
+      return;
+    }
     const area = screen.getPrimaryDisplay().workArea;
     const width = Math.min(600, area.width - 32);
     const bounds = { x: Math.round(area.x + (area.width - width) / 2), y: area.y + 8, width, height: 44 };
@@ -48,6 +52,8 @@ export class ControlBanner {
   }
 
   destroy(): void {
+    // the app is quitting; later state changes (e.g. from core.stop) must not touch the window
+    this.destroyed = true;
     if (this.win && !this.win.isDestroyed()) this.win.destroy();
   }
 }
