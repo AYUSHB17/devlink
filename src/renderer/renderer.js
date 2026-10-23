@@ -256,6 +256,8 @@ function renderSharing(s) {
   const m = $('screen-consent-modal');
   if (sc.prompt) {
     $('screen-consent-text').textContent = `${sc.prompt.name} wants to see this screen.`;
+    // a stray Enter/Space must refuse, not allow
+    if (m.classList.contains('hidden')) setTimeout(() => $('screen-consent-no').focus(), 0);
     m.classList.remove('hidden');
   } else m.classList.add('hidden');
   // links
@@ -296,6 +298,7 @@ function renderConsent(s) {
   const m = $('consent-modal');
   if (!p) return m.classList.add('hidden');
   $('consent-text').textContent = `${p.name} is trying to move its mouse and keyboard onto this machine.`;
+  if (m.classList.contains('hidden')) setTimeout(() => $('consent-no').focus(), 0);
   m.classList.remove('hidden');
 }
 $('consent-yes').onclick = () => call(api.answerConsent(true));

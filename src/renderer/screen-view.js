@@ -1,4 +1,17 @@
 'use strict';
+// Only accept ICE candidates on the local network (private, link-local, loopback or mDNS .local names).
+function lanCandidate(c) {
+  const parts = String((c && c.candidate) || '').split(' ');
+  const addr = (parts[4] || '').toLowerCase();
+  if (/^[0-9a-f-]+\.local$/.test(addr)) return true; // Chromium mDNS host name
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) {
+    const [a, b] = addr.split('.').map(Number);
+    return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31);
+  }
+  // IPv6 literal only (hex groups and colons)
+  if (!/^[0-9a-f:]+$/.test(addr) || !addr.includes(':')) return false;
+  return addr === '::1' || /^fe[89ab][0-9a-f]:/.test(addr) || /^f[cd][0-9a-f]{2}:/.test(addr);
+}
 // Viewer: receives the other machine's screen over WebRTC. Signalling arrives via DevLink's encrypted session.
 const api = window.screenApi;
 const video = document.getElementById('video');
@@ -35,7 +48,7 @@ api.onSignal(async (d) => {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       api.signal({ type: 'answer', sdp: answer.sdp });
-    } else if (d && d.candidate && pc) {
+    } else if (d && d.candidate && pc && lanCandidate(d.candidate)) {
       await pc.addIceCandidate(d.candidate);
     }
   } catch (e) {

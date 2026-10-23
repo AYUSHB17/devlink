@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -52,6 +53,19 @@ export function sanitizeRelPath(rel: string): string {
       return s.slice(0, 200);
     });
   return parts.join(path.sep) || 'file';
+}
+
+/**
+ * Mark a received file the way browsers mark downloads (macOS quarantine, Windows mark-of-the-web), so
+ * Gatekeeper / SmartScreen / Office Protected View still apply when it's opened later.
+ */
+export function markFromNetwork(p: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') fs.writeFile(p + ':Zone.Identifier', '[ZoneTransfer]\r\nZoneId=3\r\n', () => resolve());
+    else if (process.platform === 'darwin')
+      execFile('xattr', ['-w', 'com.apple.quarantine', `0081;${Math.floor(Date.now() / 1000).toString(16)};DevLink;`, p], () => resolve());
+    else resolve();
+  });
 }
 
 /** Set asynchronously by a file-reject from the receiver (a function, so TypeScript doesn't narrow it away). */
@@ -321,12 +335,14 @@ export class FileTransfers {
         this.unacked.set(peerId, 0);
         this.core.send(peerId, { t: 'file-ack', bytes: rest });
       }
-      inc.ws.end(() => {
+      inc.ws.end(async () => {
         if (inc.failed || inc.got !== inc.size) {
           t.state = 'error';
           t.error = inc.failed ?? 'size mismatch';
           fs.rm(inc.file, { force: true }, () => undefined);
         } else {
+          // marked before anything (e.g. "Send & open") can open it
+          await markFromNetwork(inc.file);
           t.filesDone++;
           if (t.filesDone >= t.files && t.state === 'active') {
             t.state = 'done';

@@ -15,7 +15,7 @@ export class ControlBanner {
     core.on('changed', () => this.update());
     // one-click stop from the banner itself, while this screen is being viewed
     ipcMain.handle('banner:stop', (e) => {
-      if (this.win && !this.win.isDestroyed() && e.sender.id === this.win.webContents.id) core.screen.stopAll();
+      if (this.win && !this.win.isDestroyed() && e.sender.id === this.win.webContents.id) core.screen.stopSharing();
     });
   }
 
@@ -24,8 +24,9 @@ export class ControlBanner {
     const controlledBy = snap.mode === 'following' ? snap.peer : null;
     const viewedBy = this.core.screen.isSharing();
     const peer = controlledBy ?? viewedBy;
-    const mode = controlledBy ? 'control' : 'view';
-    const key = peer ? `${mode}:${peer}` : null;
+    // controlled and viewed at once: keep the viewing cue and its Stop button visible
+    const mode = controlledBy && viewedBy ? 'both' : controlledBy ? 'control' : 'view';
+    const key = peer ? `${mode}:${peer}:${viewedBy ?? ''}` : null;
     if (key === this.shownFor || this.destroyed) return;
     this.shownFor = key;
     if (!peer) {
@@ -63,7 +64,7 @@ export class ControlBanner {
     } else this.win.setBounds(bounds);
     // while controlled the banner is click-through; while viewed it carries a Stop button
     this.win.setIgnoreMouseEvents(mode === 'control');
-    void this.win.loadFile(path.join(this.rendererDir, 'banner.html'), { query: { name: peer, mode } });
+    void this.win.loadFile(path.join(this.rendererDir, 'banner.html'), { query: { name: peer, mode, viewer: viewedBy ?? '' } });
     this.win.showInactive();
   }
 

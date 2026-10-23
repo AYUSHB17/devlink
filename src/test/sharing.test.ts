@@ -195,4 +195,21 @@ describe('links, browser bridge and screen view between two devices', () => {
     await waitFor(() => reasons.length === 2, 'denied again');
     assert.equal(B.screen.snapshot().prompt, null, 'no second prompt');
   });
+
+  test('requests queued behind one prompt cannot exceed the sharing limit', async () => {
+    const oldA = A.sessions.get(B.id);
+    const sock = await (B as any).connect('127.0.0.1', A.listenPort);
+    B.adopt((await handshake(sock, 'initiator', (B as any).ctx({ mode: 'normal', expectId: A.id }))).session);
+    await waitFor(() => !!A.sessions.get(B.id) && A.sessions.get(B.id) !== oldA && B.sessions.size === 1, 'fresh connection');
+    const started: string[] = [];
+    B.screen.on('share-start', (sid) => started.push(sid));
+    for (let i = 0; i < 10; i++) A.screen.request(B.id);
+    await waitFor(() => B.screen.snapshot().prompt !== null, 'prompt');
+    await new Promise((r) => setTimeout(r, 100));
+    B.screen.answerConsent(true);
+    await waitFor(() => started.length > 0, 'some start');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(started.length <= 3, `started ${started.length}`);
+    B.screen.stopAll();
+  });
 });

@@ -117,8 +117,14 @@ export class ScreenShare extends EventEmitter {
     return c.ok ? 'yes' : 'no';
   }
 
+  private sharingCount(): number {
+    return [...this.streams.values()].filter((x) => x.role === 'sharer').length;
+  }
+
   private startSharing(peerId: string, sid: string): void {
     if (!this.core.sessions.has(peerId)) return;
+    // re-checked here: several requests may have queued behind one prompt
+    if (this.sharingCount() >= MAX_SHARES) return void this.core.send(peerId, { t: 'screen-deny', sid, reason: 'that device is already sharing its screen' });
     this.streams.set(sid, { sid, peerId, role: 'sharer', state: 'waiting' });
     this.core.send(peerId, { t: 'screen-ok', sid });
     this.emit('share-start', sid, peerId);
@@ -136,7 +142,8 @@ export class ScreenShare extends EventEmitter {
         if (!this.core.store.settings.allowScreenView) return deny('screen viewing is turned off on that device');
         const blocked = this.canShare();
         if (blocked) return deny(blocked);
-        if ([...this.streams.values()].filter((x) => x.role === 'sharer').length >= MAX_SHARES) return deny('that device is already sharing its screen');
+        const queued = this.prompt?.sids.length ?? 0;
+        if (this.sharingCount() + queued >= MAX_SHARES) return deny('that device is already sharing its screen');
         const c = this.hasConsent(peerId);
         if (c === 'no') return deny('declined on that device');
         if (c === 'yes') return this.startSharing(peerId, sid);
@@ -158,7 +165,7 @@ export class ScreenShare extends EventEmitter {
         if (s?.role === 'viewer' && s.peerId === peerId) this.end(sid, String(msg.reason ?? 'refused').slice(0, 200), false);
         break;
       case 'screen-sig':
-        if (s && s.peerId === peerId) this.emit('signal', sid, msg.data);
+        if (s && s.peerId === peerId && JSON.stringify(msg.data ?? null).length <= MAX_SIGNAL) this.emit('signal', sid, msg.data);
         break;
       case 'screen-stop':
         if (s && s.peerId === peerId) this.end(sid, s.role === 'viewer' ? 'the other device stopped sharing' : '', false);
@@ -178,6 +185,11 @@ export class ScreenShare extends EventEmitter {
   isSharing(): string | null {
     for (const s of this.streams.values()) if (s.role === 'sharer') return this.peerName(s.peerId);
     return null;
+  }
+
+  /** Stop only the streams where this machine's screen is being shown (the viewer windows stay). */
+  stopSharing(): void {
+    for (const s of [...this.streams.values()]) if (s.role === 'sharer') this.end(s.sid, '', true);
   }
 
   stopAll(): void {

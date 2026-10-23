@@ -28,6 +28,10 @@ directly between your machines over the local network (no cloud, no account).
 * Port forwards listen on `127.0.0.1` only, and the far side only connects to its own `127.0.0.1`. It is **off by default**; turn it on in Settings ("Allow paired devices to forward ports") when you need it.
 * Received file paths are sanitised (no `..`, absolute paths, or Windows-reserved names) and confined to the receive folder.
 * Shortcut commands only run locally, from your own saved list; a peer cannot trigger commands.
+* Browser extension bridge: listens on 127.0.0.1 only, off by default, needs the token from Settings, refuses web
+  pages (Host/Origin checks) and any extension other than the first one linked. The extension sends its token to
+  whatever answers on that local port, so a program already running on your Mac/PC that grabs the port first could
+  read it; it could then only send links to your paired devices. Make a new token in Settings if in doubt.
 * Traffic stays on your LAN. Do **not** expose the listen port (default 47821) to the internet.
 
 Protocol details are in [`src/main/protocol.ts`](src/main/protocol.ts).

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Notification, powerMonitor, safeStorage, shell } from 'electron';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -15,6 +15,11 @@ import { registerRemoteFsIpc } from './remotefs-ipc';
 import { runInTerminal } from './shortcuts';
 
 // Two instances on one machine (for testing): DEVLINK_PROFILE=b DEVLINK_PORT=47822 npm start
+// Screen view runs WebRTC on the LAN without STUN/TURN. Chromium hides host IPs behind random .local mDNS
+// names by default, which other machines often can't resolve (notably on Windows); DevLink's windows only
+// load local pages, so use the real LAN addresses.
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
 const profile = process.env.DEVLINK_PROFILE;
 if (profile) app.setPath('userData', path.join(app.getPath('userData'), '..', `DevLink-${profile}`));
 if (!profile && !app.requestSingleInstanceLock()) app.quit();
@@ -29,21 +34,9 @@ let screenWins: ScreenWindows | null = null;
 /** Documents/media "Send & open" may open directly; anything else (scripts, apps…) is only shown in its folder. */
 const OPEN_OK = new Set(['.pdf', '.txt', '.md', '.log', '.csv', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.mp4', '.mov', '.mp3', '.wav', '.m4a', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.rtf', '.odt', '.ods', '.odp', '.pages', '.numbers', '.key']);
 function openReceived(p: string, files: number): void {
-  markFromNetwork(p);
+  // received files are already marked as downloaded (see files.ts markFromNetwork)
   if (files === 1 && OPEN_OK.has(path.extname(p).toLowerCase()) && fs.existsSync(p) && fs.statSync(p).isFile()) void shell.openPath(p);
   else shell.showItemInFolder(p);
-}
-
-/** Mark a received file the way browsers do (macOS quarantine / Windows mark-of-the-web) before opening it. */
-function markFromNetwork(p: string): void {
-  try {
-    if (!fs.statSync(p).isFile()) return;
-    if (process.platform === 'win32') fs.writeFileSync(p + ':Zone.Identifier', '[ZoneTransfer]\r\nZoneId=3\r\n');
-    else if (process.platform === 'darwin')
-      execFileSync('xattr', ['-w', 'com.apple.quarantine', `0081;${Math.floor(Date.now() / 1000).toString(16)};DevLink;`, p]);
-  } catch {
-    /* best effort */
-  }
 }
 
 const run = (cmd: string, args: string[]) =>
@@ -206,7 +199,7 @@ function registerIpc(): void {
   handle('screen:request', (peerId: string) => void core.screen.request(String(peerId)));
   // answered in this machine's own window
   handle('screen:consent', (ok: boolean) => core.screen.answerConsent(ok === true));
-  handle('screen:stopAll', () => core.screen.stopAll());
+  handle('screen:stopAll', () => core.screen.stopSharing());
   handle('screen:privacy', () => {
     if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
   });
@@ -294,14 +287,13 @@ app.whenReady().then(async () => {
   core.on('links-received', (e: { peerName: string; count: number; hosts: string[] }) =>
     notify(`${e.peerName} opened ${e.count} link(s)`, e.hosts.slice(0, 4).join(', ') + (e.hosts.length > 4 ? ', …' : '')));
   // lock screen ends screen sharing (control already ends when the local mouse/keyboard is used)
-  powerMonitor.on('lock-screen', () => core.screen.stopAll());
+  powerMonitor.on('lock-screen', () => core.screen.stopSharing());
+  powerMonitor.on('suspend', () => core.screen.stopSharing());
   core.on('links-failed', (e: { peerName: string; reason?: string }) => notify(`Couldn't open links on ${e.peerName}`, e.reason ?? ''));
   core.screen.on('consent', (peerName: string) => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-    }
+    // ask for attention without stealing focus: a peer must not be able to pull this window forward
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win?.flashFrame(true);
     notify('DevLink', `${peerName} wants to view this screen – answer in DevLink`);
   });
   // "send this tab": the front browser tab (macOS) or a link on the clipboard, to the device beside this one
@@ -311,11 +303,9 @@ app.whenReady().then(async () => {
     if (Notification.isSupported()) new Notification({ title: `Couldn't send to ${t.peerName}`, body: `${t.name}: ${t.error ?? 'failed'}` }).show();
   });
   core.input.on('consent', (peerName: string) => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-    }
+    // ask for attention without stealing focus: a peer must not be able to pull this window forward
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win?.flashFrame(true);
     if (Notification.isSupported()) new Notification({ title: 'DevLink', body: `${peerName} wants to control this machine – answer in DevLink` }).show();
   });
   // visible "being controlled" indicator: window title, plus the Dock badge on macOS

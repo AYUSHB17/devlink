@@ -56,7 +56,7 @@ export class LinkShare {
     if (!clean.length) throw new Error('only web links (http/https) can be sent');
     const id = crypto.randomBytes(6).toString('hex');
     const entries = clean.map((url) => ({ ts: Date.now(), dir: 'out' as const, peer: this.peerName(peerId), url, state: 'sent' as const }));
-    this.pending.set(id, entries);
+    this.pending.set(`${peerId}:${id}`, entries);
     if (this.pending.size > 100) this.pending.delete(this.pending.keys().next().value!);
     for (const e of entries) this.record(e);
     this.core.send(peerId, { t: 'link-open', id, urls: clean });
@@ -91,8 +91,8 @@ export class LinkShare {
         this.core.emit('links-received', { peerName: this.peerName(peerId), count: n, hosts: [...hosts] });
       }
     } else if (msg.t === 'link-ok' || msg.t === 'link-reject') {
-      const entries = this.pending.get(id);
-      this.pending.delete(id);
+      const entries = this.pending.get(`${peerId}:${id}`);
+      this.pending.delete(`${peerId}:${id}`);
       const refused = msg.t === 'link-reject';
       const note = refused ? String(msg.reason ?? 'refused').slice(0, 200) : undefined;
       for (const e of entries ?? []) {
