@@ -159,6 +159,22 @@ describe('shared mouse & keyboard', () => {
     await waitFor(() => B.core.input.mode.mode === 'local', 'follower released too', 4000);
   });
 
+  test('a new session clears the previous "lost contact" notice on both sides', async () => {
+    A.helper.fire({ ev: 'edge', side: 'right', pos: 0.5, buttons: 0 });
+    await waitFor(() => B.core.input.mode.mode === 'following', 'follower');
+    const send = B.core.send.bind(B.core);
+    (B.core as any).send = (id: string, msg: any) => (msg?.t === 'input-hb' ? true : send(id, msg));
+    await waitFor(() => A.core.input.mode.mode === 'local', 'leader released', 4000);
+    (B.core as any).send = send;
+    await waitFor(() => B.core.input.mode.mode === 'local', 'follower released too', 4000);
+    B.core.input.notice = 'lost contact with the other device';
+    assert.match(A.core.input.notice, /lost contact/);
+    A.helper.fire({ ev: 'edge', side: 'right', pos: 0.5, buttons: 0 });
+    await waitFor(() => B.core.input.mode.mode === 'following', 'follower again');
+    assert.equal(A.core.input.notice, '');
+    assert.equal(B.core.input.notice, '');
+  });
+
   test("the helper's watchdog release ends control on both sides", async () => {
     A.helper.fire({ ev: 'edge', side: 'right', pos: 0.5, buttons: 0 });
     await waitFor(() => B.core.input.mode.mode === 'following', 'follower');

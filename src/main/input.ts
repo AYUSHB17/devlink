@@ -299,6 +299,7 @@ export class InputShare extends EventEmitter {
         this.setNotice(`${this.peerName(peer)} doesn't allow remote control (turn it on in its Settings)`);
         return;
       }
+      this.notice = ''; // a message about the previous session must not linger beside the new one
       this.m = { mode: 'leading', peer, acked: false };
       this.startHeartbeat();
       this.backend?.send({ cmd: 'capture', on: true });
@@ -397,6 +398,7 @@ export class InputShare extends EventEmitter {
           }
           return deny('waiting for approval on that device – click Allow there, then move the cursor across again');
         }
+        this.notice = '';
         this.m = { mode: 'following', peer: peerId };
         this.startHeartbeat();
         this.rate = { windowStart: Date.now(), n: 0 };
