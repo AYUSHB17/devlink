@@ -286,3 +286,79 @@ bold, so it likely wraps to two lines, and a long device name (up to 100 charact
 `overflow: hidden`. Shorten the text or truncate the name. Check it once in a live session.
 
 The `rejected` set limit from section 9 ("Remaining, all low") is not in yet.
+
+## 10. Review: links, browser extension, send-and-open, screen view
+
+Read-only review of the uncommitted tree (`browser-bridge.ts`, `links.ts`, `screen.ts`, `screen-windows.ts`,
+`screen-preload.ts`, `extension/`, the new parts of `main.ts`, `files.ts`, edge strip and banner). TypeScript tests
+44 of 44 pass. Nothing was run on two real machines, and WebRTC has only been tried between two instances on one
+Mac with a fake screen.
+
+### Good (verified in the code)
+
+* **Bridge:** 127.0.0.1 only, off by default, token in a header compared in constant time, `Host` must be
+  localhost/127.0.0.1 (DNS rebinding), web-page `Origin` refused, `OPTIONS` refused, no CORS headers, 64 KB body cap,
+  request rate limit, and the first extension to use the token is pinned (others refused until a new token).
+* **Links:** `cleanUrl` allows http/https only, no embedded credentials, 4096 characters; off by default; capped per
+  send and per minute; the extension and the edge strip both go through the same checks.
+* **Send and open:** off by default; allowlist of document/media types, single file only; everything else is only
+  shown in its folder; opened files get the macOS quarantine flag or the Windows mark-of-the-web first.
+* **Tab hotkey:** the browser name is checked against a fixed list before it goes into AppleScript, `execFile`
+  (no shell), no user text is interpolated.
+* **Screen view:** off by default; consent per connection kept in memory against the `Session` object; consent
+  clicks ignored while this machine is being remotely controlled; signalling only over the encrypted session;
+  `iceServers: []`; the window-to-stream mapping lives in the main process; the preload exposes only that stream's
+  controls; the banner is excluded from screen capture and has its own stop button; streams end on connection loss
+  or replacement.
+
+### Still open
+
+| # | severity | where | issue | fix |
+|---|---|---|---|---|
+| 1 | medium-low | `screen.ts` `screen-req` | While a consent prompt is open, every new `screen-req` from the same peer is pushed onto `prompt.sids` with no limit, and the `MAX_SHARES` check only counts streams already started. One click on Allow then starts all of them, each with its own capture window. | Cap pending requests (count them with the started streams) and re-check `MAX_SHARES` in `startSharing`. |
+| 2 | medium-low | `main.ts` `markFromNetwork` | Quarantine and mark-of-the-web are applied only to a single file that is being auto-opened. Everything else received (files, and every file inside a received folder) is unmarked, so Gatekeeper, SmartScreen and Office Protected View do not apply when you open it later. | Mark every received file (including folder contents) when its transfer completes. |
+| 3 | low | `main.ts` `screen.on('consent')` | A screen-view request restores and focuses the DevLink window and raises a notification, and a peer can repeat it. That steals focus, and a stray keypress can land on the dialog. | Notification and Dock bounce only; keep the default button on "Don't allow". |
+| 4 | low | `control-banner.ts` | If the same device both controls and views this machine, the banner shows only the control message and is click-through, so the viewing cue and the Stop button disappear exactly then. | Show a combined message; keep Stop usable when not remotely controlled. |
+| 5 | low | `screen-send.js`, `screen-view.js`, `screen.ts` `screen-sig` | ICE candidates from the peer go straight into `addIceCandidate`, so a peer can make this machine probe an arbitrary non-LAN address; the incoming signal size is not capped (only outgoing). | Accept only private, link-local and loopback candidates; cap incoming signal size. |
+| 6 | low | `screen.ts` | Sharing continues while the sharer's screen is locked or the machine sleeps. | Stop on lock-screen and suspend (Electron `powerMonitor`). |
+| 7 | low | `browser-bridge.ts` + extension | The extension sends the token to whatever answers on `127.0.0.1:<port>`. A local process that grabs the port first would receive it. | Low practical risk (needs a hostile process on the same machine); document it, or answer a challenge before the token is sent. |
+| 8 | low | `links.ts` | Pending sends are keyed by the id only, not by peer, so with several paired devices one could acknowledge another's links. | Key by peer id and link id. |
+| 9 | info | `main.ts` `banner:stop` | The banner's Stop ends all screen streams, including ones where this machine is the viewer. | Stop only streams being shared from this machine. |
+
+### Functional risk, not security
+
+* WebRTC between **two real machines** is untested. Chromium hides host IPs behind `.local` names by default, which
+  can fail on Windows or locked-down networks, and there is no STUN or relay to fall back on. Windows will also ask
+  for a UDP firewall rule. Test cross-machine first; if it fails, disable the mDNS-obfuscation feature flag for the
+  capture/view windows (acceptable on a trusted LAN).
+* An 8 Mbit/s stream shares Wi-Fi with input events; check cursor lag while it runs (same measurement as TEST_CHECKLIST
+  section 8).
+* Add to the test checklist (after the other session finishes editing it): links, tab hotkey, send and open,
+  extension setup, screen view consent, banner, and stopping.
+
+## 11. Re-review of the section 10 findings
+
+Diffed the working tree against `eec12f7`. TypeScript tests 49 of 49. Not run on two real machines.
+
+| # | finding | result |
+|---|---|---|
+| 1 | queued screen requests | **fixed.** Started plus queued requests count against `MAX_SHARES`, and `startSharing` re-checks. A test sends 10 requests behind one prompt and at most 3 start. |
+| 2 | received files not marked | **fixed.** `markFromNetwork` runs in `files.ts` on every completed received file (folder contents too), on the success path only, before `received` is emitted. |
+| 3 | focus stealing | **fixed.** Consent prompts bounce the Dock or flash the taskbar without focusing the window; "Don't allow" gets focus when a modal opens. |
+| 4 | banner hid the viewing cue | **fixed** for one device (a "both" mode with Stop and mouse events). |
+| 5 | ICE candidates and signal size | **mostly fixed** (see below); incoming `screen-sig` is capped at 64 KB. |
+| 6 | lock and sleep | **fixed.** Sharing stops on lock-screen and suspend. |
+| 7 | extension token and port | **accepted as documented.** The token only works against DevLink's own bridge. |
+| 8 | link acknowledgements | **fixed.** Keyed by peer id and link id. |
+| 9 | banner Stop scope | **fixed.** `stopSharing()` ends only streams where this machine is shared. |
+| - | mDNS names on the LAN | **handled.** `WebRtcHideLocalIpsWithMdns` is disabled app-wide so candidates carry real LAN addresses (the app only loads local pages). Still needs a real two-machine test. |
+
+### Small things left (all low)
+
+* **Candidate filter matches text, not a real address.** `lanCandidate` tests prefixes such as `^10\.` and
+  `^192\.168\.`, so a hostname like `10.attacker.example` would pass. Check the address is a real IPv4 (four numbers)
+  or a real IPv6 literal before looking at the range.
+* **Banner attribution with several devices.** In "both" mode the name shown is the controller's even if a
+  different device is the viewer. Harmless with two machines.
+* **Not tested on hardware:** WebRTC across two machines (including the Windows UDP firewall prompt), cursor lag while
+  a stream runs, the Windows `Zone.Identifier` marking, and macOS quarantine behaviour for opened files.
