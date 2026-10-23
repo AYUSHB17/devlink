@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "DevLink – send tabs",
+  "version": "0.1.0",
+  "description": "Send the current tab, or every tab in a window, to your other computer through the DevLink app.",
+  "permissions": ["tabs", "contextMenus", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "DevLink", "default_popup": "popup.html" },
+  "options_page": "options.html"
+}

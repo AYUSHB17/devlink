@@ -31,6 +31,7 @@
   <main>
     <section id="view-devices" class="view active">
       <h1>Devices</h1>
+      <div id="sharing-status"></div>
       <div id="peers"></div>
       <div class="card">
         <h2>Pair a new device</h2>
@@ -79,6 +80,14 @@
       </div>
       <h2>Recent activity</h2>
       <div id="clip-log" class="list"></div>
+      <h2>Send a link</h2>
+      <form id="link-form" class="card row">
+        <input id="link-url" class="grow" placeholder="https://…" autocomplete="off" />
+        <select id="link-peer"></select>
+        <button type="submit" class="primary">Open there</button>
+      </form>
+      <p class="muted small">Or drag a link (or a URL from the address bar) onto the shared screen edge, or press <b id="tab-hotkey">Cmd+Option+Shift+L</b> in your browser to send the current tab.</p>
+      <div id="link-log" class="list"></div>
     </section>
 
     <section id="view-files" class="view">
@@ -127,6 +136,12 @@
         <label>Device name <input id="set-deviceName" /></label>
         <label class="switch"><input type="checkbox" id="set-acceptFiles" /> Accept files from paired devices</label>
         <label class="switch"><input type="checkbox" id="set-allowForwarding" /> Allow paired devices to forward ports to this machine's localhost</label>
+        <label class="switch"><input type="checkbox" id="set-acceptLinks" /> Open web links that paired devices send (http/https only)</label>
+        <label class="switch"><input type="checkbox" id="set-openSentFiles" /> "Send &amp; open": open received documents in their app (other files are only shown in their folder)</label>
+        <label class="switch"><input type="checkbox" id="set-allowScreenView" /> Allow paired devices to view this screen (you approve each connection)</label>
+        <div id="screen-perm" class="row small"></div>
+        <label class="switch"><input type="checkbox" id="set-browserBridge" /> Browser extension: let the DevLink extension send tabs from this browser</label>
+        <div id="bridge-info" class="small"></div>
         <div class="row"><span>Received files go to</span> <code id="set-downloads"></code> <button id="btn-downloads">Change…</button></div>
         <label>Listen port <input id="set-listenPort" size="6" /> <span class="muted small">(restart to apply)</span></label>
         <div class="muted small">Fingerprint <code id="self-fp"></code> – compare with the other machine to be sure you paired the right device.</div>
@@ -143,6 +158,17 @@
       <div class="row end">
         <button id="modal-no">Doesn't match</button>
         <button id="modal-yes" class="primary">Codes match</button>
+      </div>
+    </div>
+  </div>
+  <div id="screen-consent-modal" class="modal hidden">
+    <div class="dialog">
+      <h2>Allow screen viewing?</h2>
+      <p id="screen-consent-text"></p>
+      <p class="muted small">They will see everything on this screen until you stop it here. A red banner shows while it's on. You'll be asked again after DevLink reconnects or restarts.</p>
+      <div class="row end">
+        <button id="screen-consent-no">Don't allow</button>
+        <button id="screen-consent-yes" class="primary">Allow for this connection</button>
       </div>
     </div>
   </div>

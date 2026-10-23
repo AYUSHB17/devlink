@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld('devlink', {
   setLayout: (peerId: string, side: string | null) => invoke('input:layout', peerId, side),
   openPrivacy: (pane: string) => invoke('input:privacy', pane),
   answerConsent: (ok: boolean) => invoke('input:consent', ok),
+  sendLink: (peerId: string, url: string) => invoke('links:send', peerId, url),
+  pickAndSendOpen: (peerId: string) => invoke('files:pickOpen', peerId),
+  viewScreen: (peerId: string) => invoke('screen:request', peerId),
+  answerScreenConsent: (ok: boolean) => invoke('screen:consent', ok),
+  stopScreenSharing: () => invoke('screen:stopAll'),
+  openScreenPrivacy: () => invoke('screen:privacy'),
+  newBridgeToken: () => invoke('bridge:newToken'),
   rfs: {
     enable: (on: boolean) => invoke('rfs:enable', on),
     share: (writable: boolean) => invoke('rfs:share', writable),

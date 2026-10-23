@@ -37,7 +37,18 @@ window.addEventListener('drop', async (e) => {
     return;
   }
   const paths = [...e.dataTransfer.files].map((f) => window.strip.pathForFile(f)).filter(Boolean);
-  if (!paths.length) return;
+  if (!paths.length) {
+    // a link, or a URL dragged from a browser's address bar
+    const list = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => /^https?:\/\//i.test(l));
+    if (!list.length) return;
+    label.textContent = `Opening ${list.length} link(s) there…`;
+    const r = await window.strip.dropLinks(list);
+    if (!r.ok) label.textContent = r.error;
+    return;
+  }
   label.textContent = `Sending ${paths.length} item(s)…`;
   const r = await window.strip.drop(paths);
   if (!r.ok) label.textContent = r.error;

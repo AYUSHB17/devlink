@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import * as path from 'path';
 import type { Core } from './core';
 
@@ -13,13 +13,22 @@ export class ControlBanner {
 
   constructor(private core: Core, private rendererDir: string) {
     core.on('changed', () => this.update());
+    // one-click stop from the banner itself, while this screen is being viewed
+    ipcMain.handle('banner:stop', (e) => {
+      if (this.win && !this.win.isDestroyed() && e.sender.id === this.win.webContents.id) core.screen.stopSharing();
+    });
   }
 
   private update(): void {
     const snap = this.core.input.snapshot();
-    const peer = snap.mode === 'following' ? snap.peer : null;
-    if (peer === this.shownFor || this.destroyed) return;
-    this.shownFor = peer;
+    const controlledBy = snap.mode === 'following' ? snap.peer : null;
+    const viewedBy = this.core.screen.isSharing();
+    const peer = controlledBy ?? viewedBy;
+    // controlled and viewed at once: keep the viewing cue and its Stop button visible
+    const mode = controlledBy && viewedBy ? 'both' : controlledBy ? 'control' : 'view';
+    const key = peer ? `${mode}:${peer}:${viewedBy ?? ''}` : null;
+    if (key === this.shownFor || this.destroyed) return;
+    this.shownFor = key;
     if (!peer) {
       if (this.win && !this.win.isDestroyed()) this.win.hide();
       return;
@@ -39,15 +48,23 @@ export class ControlBanner {
         hasShadow: false,
         alwaysOnTop: true,
         show: false,
-        webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+        webPreferences: {
+          preload: path.join(__dirname, '..', 'preload', 'banner-preload.js'),
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+        },
       });
+      // keep the banner out of screen captures (and out of the other machine's view of this screen)
+      this.win.setContentProtection(true);
       this.win.setAlwaysOnTop(true, 'screen-saver');
       this.win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      this.win.setIgnoreMouseEvents(true); // never intercept clicks
       this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       this.win.webContents.on('will-navigate', (e) => e.preventDefault());
     } else this.win.setBounds(bounds);
-    void this.win.loadFile(path.join(this.rendererDir, 'banner.html'), { query: { name: peer } });
+    // while controlled the banner is click-through; while viewed it carries a Stop button
+    this.win.setIgnoreMouseEvents(mode === 'control');
+    void this.win.loadFile(path.join(this.rendererDir, 'banner.html'), { query: { name: peer, mode, viewer: viewedBy ?? '' } });
     this.win.showInactive();
   }
 

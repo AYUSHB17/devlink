@@ -104,6 +104,24 @@ saw next to anything that fails. For basics (firewall prompt, discovery, reconne
 - [ ] macOS Secure Input (focus a password field or Terminal with Secure Keyboard Entry): a notice appears that
       typing cannot be forwarded.
 
+## 10. Links, tabs and Send & open
+
+- [ ] Receiver: Settings → "Open web links that paired devices send" on. Clipboard tab → Send a link → opens in the other machine's default browser.
+- [ ] Drag the URL from the browser address bar onto the shared edge strip → opens on the other machine.
+- [ ] In the browser press Cmd+Option+Shift+L (Mac) / Ctrl+Alt+Shift+L (Windows; copy the link first) → current tab opens there. macOS asks once to let Electron control the browser.
+- [ ] Extension: chrome://extensions or edge://extensions → Developer mode → Load unpacked → `extension/`. Settings → Browser extension on → copy token into the extension options → "Send this tab" and "Send all tabs in this window".
+- [ ] With "Open web links" off, the sender gets a "turned off" notification and nothing opens.
+- [ ] Send & open a PDF → it opens. Send & open a .sh / .exe / .bat → only its folder is shown.
+
+## 11. Screen view
+
+- [ ] Shared machine: Settings → "Allow paired devices to view this screen" on (macOS: also Screen Recording for Electron, then restart DevLink).
+- [ ] Viewer: Devices → View screen → the shared machine shows "Allow screen viewing?" → Allow → live video appears.
+- [ ] Red banner "… is viewing this screen" on the shared machine; "Stop sharing" ends it and the viewer says so.
+- [ ] Mini player: small always-on-top window in the corner; "Full window" restores.
+- [ ] Note resolution / fps shown in the viewer (hover the bottom bar) over Wi-Fi: ___
+- [ ] After a reconnect, viewing asks for approval again.
+
 ## Results log
 
 | section | pass / fail | what you saw |

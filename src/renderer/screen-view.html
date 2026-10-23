@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' blob: mediastream:" />
+  <title>Screen</title>
+  <link rel="stylesheet" href="screen.css" />
+</head>
+<body>
+  <video id="video" autoplay playsinline muted></video>
+  <div id="overlay"><div id="msg">Connecting…</div></div>
+  <div id="bar">
+    <span id="who"></span>
+    <span class="grow"></span>
+    <span id="stats"></span>
+    <button id="mini" title="Small window that stays on top">Mini player</button>
+    <button id="stop">Stop</button>
+  </div>
+  <script src="screen-view.js"></script>
+</body>
+</html>

@@ -32,6 +32,18 @@ export interface Settings {
   invertScroll: boolean;
   clipboardOnCross: boolean;
   edgeDrop: boolean;
+  /** open http(s) links that paired devices send in this machine's browser */
+  acceptLinks: boolean;
+  /** "Send & open": open received documents in their default app (allowlisted types only) */
+  openSentFiles: boolean;
+  /** let paired devices view this machine's screen (each connection still asks) */
+  allowScreenView: boolean;
+  /** local bridge for the browser extension (127.0.0.1 only, token protected) */
+  browserBridge: boolean;
+  browserBridgePort: number;
+  browserBridgeToken: string;
+  /** the one extension allowed to use the bridge (learned on first use; reset with a new token) */
+  browserBridgeOrigin: string;
 }
 
 export type ScreenSide = 'left' | 'right' | 'top' | 'bottom';
@@ -109,6 +121,13 @@ export class Store {
         invertScroll: false,
         clipboardOnCross: true,
         edgeDrop: true,
+        acceptLinks: false,
+        openSentFiles: false,
+        allowScreenView: false,
+        browserBridge: false,
+        browserBridgePort: 47823,
+        browserBridgeToken: '',
+        browserBridgeOrigin: '',
         ...defaults,
         ...(loaded.settings ?? {}),
       },

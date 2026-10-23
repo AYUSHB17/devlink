@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Notification, powerMonitor, safeStorage, shell } from 'electron';
+import { execFile } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,11 +8,18 @@ import { Core } from './core';
 import { ControlBanner } from './control-banner';
 import { EdgeStrips, stripPage } from './edge-strip';
 import { findHelper, HelperProcess } from './input-helper';
+import { cleanUrl } from './links';
+import { ScreenWindows } from './screen-windows';
 import { SecretBox } from './store';
 import { registerRemoteFsIpc } from './remotefs-ipc';
 import { runInTerminal } from './shortcuts';
 
 // Two instances on one machine (for testing): DEVLINK_PROFILE=b DEVLINK_PORT=47822 npm start
+// Screen view runs WebRTC on the LAN without STUN/TURN. Chromium hides host IPs behind random .local mDNS
+// names by default, which other machines often can't resolve (notably on Windows); DevLink's windows only
+// load local pages, so use the real LAN addresses.
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
 const profile = process.env.DEVLINK_PROFILE;
 if (profile) app.setPath('userData', path.join(app.getPath('userData'), '..', `DevLink-${profile}`));
 if (!profile && !app.requestSingleInstanceLock()) app.quit();
@@ -21,6 +29,56 @@ let win: BrowserWindow | null = null;
 let core: Core;
 let strips: EdgeStrips | null = null;
 let banner: ControlBanner | null = null;
+let screenWins: ScreenWindows | null = null;
+
+/** Documents/media "Send & open" may open directly; anything else (scripts, apps…) is only shown in its folder. */
+const OPEN_OK = new Set(['.pdf', '.txt', '.md', '.log', '.csv', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.mp4', '.mov', '.mp3', '.wav', '.m4a', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.rtf', '.odt', '.ods', '.odp', '.pages', '.numbers', '.key']);
+function openReceived(p: string, files: number): void {
+  // received files are already marked as downloaded (see files.ts markFromNetwork)
+  if (files === 1 && OPEN_OK.has(path.extname(p).toLowerCase()) && fs.existsSync(p) && fs.statSync(p).isFile()) void shell.openPath(p);
+  else shell.showItemInFolder(p);
+}
+
+const run = (cmd: string, args: string[]) =>
+  new Promise<string>((resolve, reject) => execFile(cmd, args, { timeout: 3000 }, (e, out) => (e ? reject(e) : resolve(String(out)))));
+const CHROMIUM = ['Google Chrome', 'Google Chrome Canary', 'Microsoft Edge', 'Brave Browser', 'Arc', 'Chromium', 'Vivaldi', 'Opera'];
+
+/** URL of the frontmost browser tab on macOS (asks for Automation permission once), else a link on the clipboard. */
+async function frontTabUrl(): Promise<string | null> {
+  if (process.platform === 'darwin') {
+    try {
+      const asn = (await run('lsappinfo', ['front'])).trim();
+      const name = /"LSDisplayName"="([^"]+)"/.exec(await run('lsappinfo', ['info', '-only', 'name', asn]))?.[1] ?? '';
+      const script = CHROMIUM.includes(name)
+        ? `tell application "${name}" to get URL of active tab of front window`
+        : name === 'Safari'
+          ? 'tell application "Safari" to get URL of front document'
+          : null;
+      if (script) {
+        const url = cleanUrl((await run('osascript', ['-e', script])).trim());
+        if (url) return url;
+      }
+    } catch {
+      /* fall back to the clipboard */
+    }
+  }
+  return cleanUrl((await clipboard.readText()).trim());
+}
+
+async function sendFrontTab(notify: (title: string, body: string) => unknown): Promise<void> {
+  const online = core.store.peers.filter((p) => core.sessions.has(p.id));
+  const beside = online.filter((p) => core.store.settings.inputLayout?.[p.id]);
+  const target = beside.length === 1 ? beside[0] : online.length === 1 ? online[0] : null;
+  if (!target) return void notify('DevLink', online.length ? 'Several devices are connected; arrange one in the Screens tab' : 'No device is connected');
+  const url = await frontTabUrl();
+  if (!url) return void notify('DevLink', 'No browser tab found. Copy a link, then press the shortcut again.');
+  try {
+    core.links.send(target.id, [url]);
+    notify('DevLink', `Sent to ${target.name}: ${url.slice(0, 80)}`);
+  } catch (e: any) {
+    notify('DevLink', e.message);
+  }
+}
 const preloadPath = path.join(__dirname, '..', 'preload', 'preload.js');
 const rendererDir = path.join(__dirname, '..', 'renderer');
 
@@ -105,7 +163,7 @@ function registerIpc(): void {
   handle('unpair', (id: string) => core.unpair(id));
   handle('settings', (patch: Record<string, unknown>) => {
     const allowed = ['deviceName', 'clipboardSync', 'clipboardImages', 'acceptFiles', 'allowForwarding', 'listenPort'];
-    const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop'];
+    const bools = ['inputSharing', 'allowRemoteInput', 'swapCmdCtrl', 'invertScroll', 'clipboardOnCross', 'edgeDrop', 'acceptLinks', 'openSentFiles', 'allowScreenView', 'browserBridge'];
     const clean: Record<string, unknown> = {};
     for (const k of allowed) if (k in patch) clean[k] = patch[k];
     for (const k of bools) if (typeof patch[k] === 'boolean') clean[k] = patch[k];
@@ -113,6 +171,8 @@ function registerIpc(): void {
     if ('pointerScale' in patch && scale >= 0.25 && scale <= 4) clean.pointerScale = scale;
     core.store.updateSettings(clean);
     core.input.announce();
+    core.screen.settingsChanged();
+    void core.bridge.reconcile();
     core.changed();
   });
   handle('settings:downloads', async () => {
@@ -128,6 +188,24 @@ function registerIpc(): void {
     if (r.canceled) return 0;
     void core.files.sendPaths(peerId, r.filePaths).catch((e) => core.log(String(e)));
     return r.filePaths.length;
+  });
+  handle('files:pickOpen', async (peerId: string) => {
+    const r = await dialog.showOpenDialog(win!, { properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return 0;
+    void core.files.sendPaths(peerId, r.filePaths, { open: true }).catch((e) => core.log(String(e)));
+    return 1;
+  });
+  handle('links:send', (peerId: string, url: string) => core.links.send(String(peerId), [url]));
+  handle('screen:request', (peerId: string) => void core.screen.request(String(peerId)));
+  // answered in this machine's own window
+  handle('screen:consent', (ok: boolean) => core.screen.answerConsent(ok === true));
+  handle('screen:stopAll', () => core.screen.stopSharing());
+  handle('screen:privacy', () => {
+    if (process.platform === 'darwin') return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  });
+  handle('bridge:newToken', () => {
+    core.bridge.newToken();
+    core.changed();
   });
   handle('reveal', (p: string) => {
     // only reveal paths inside the receive folder
@@ -188,13 +266,15 @@ app.whenReady().then(async () => {
       deviceName: (require('os').hostname() as string).replace(/\.local$/, '') + (profile ? `-${profile}` : ''),
     },
     log: (m) => console.log(`[devlink] ${m}`),
+    openUrl: (u) => void shell.openExternal(u),
     inputBackend: new HelperProcess(
       findHelper(path.join(__dirname, '..', '..'), app.isPackaged ? process.resourcesPath : undefined),
       (m) => console.log(`[devlink] ${m}`),
     ),
   });
   core.on('changed', pushState);
-  core.on('received', (t: { name: string; peerName: string; path?: string }) => {
+  core.on('received', (t: { name: string; peerName: string; path?: string; open?: boolean; files: number }) => {
+    if (t.open && t.path && core.store.settings.openSentFiles) openReceived(t.path, t.files);
     if (!Notification.isSupported()) return;
     const n = new Notification({ title: `Received from ${t.peerName}`, body: t.name });
     n.on('click', () => t.path && shell.showItemInFolder(t.path));
@@ -202,15 +282,30 @@ app.whenReady().then(async () => {
   });
   strips = new EdgeStrips(core, path.join(__dirname, '..', 'preload', 'strip-preload.js'), stripPage(rendererDir));
   banner = new ControlBanner(core, rendererDir);
+  screenWins = new ScreenWindows(core, path.join(__dirname, '..', 'preload', 'screen-preload.js'), rendererDir);
+  const notify = (title: string, body: string) => Notification.isSupported() && new Notification({ title, body }).show();
+  core.on('links-received', (e: { peerName: string; count: number; hosts: string[] }) =>
+    notify(`${e.peerName} opened ${e.count} link(s)`, e.hosts.slice(0, 4).join(', ') + (e.hosts.length > 4 ? ', …' : '')));
+  // lock screen ends screen sharing (control already ends when the local mouse/keyboard is used)
+  powerMonitor.on('lock-screen', () => core.screen.stopSharing());
+  powerMonitor.on('suspend', () => core.screen.stopSharing());
+  core.on('links-failed', (e: { peerName: string; reason?: string }) => notify(`Couldn't open links on ${e.peerName}`, e.reason ?? ''));
+  core.screen.on('consent', (peerName: string) => {
+    // ask for attention without stealing focus: a peer must not be able to pull this window forward
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win?.flashFrame(true);
+    notify('DevLink', `${peerName} wants to view this screen – answer in DevLink`);
+  });
+  // "send this tab": the front browser tab (macOS) or a link on the clipboard, to the device beside this one
+  const hotkey = 'CommandOrControl+Alt+Shift+L';
+  if (!globalShortcut.register(hotkey, () => void sendFrontTab(notify))) core.log(`could not register ${hotkey}`);
   core.on('send-failed', (t: { name: string; peerName: string; error?: string }) => {
     if (Notification.isSupported()) new Notification({ title: `Couldn't send to ${t.peerName}`, body: `${t.name}: ${t.error ?? 'failed'}` }).show();
   });
   core.input.on('consent', (peerName: string) => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-    }
+    // ask for attention without stealing focus: a peer must not be able to pull this window forward
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win?.flashFrame(true);
     if (Notification.isSupported()) new Notification({ title: 'DevLink', body: `${peerName} wants to control this machine – answer in DevLink` }).show();
   });
   // visible "being controlled" indicator: window title, plus the Dock badge on macOS
@@ -249,6 +344,8 @@ app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   strips?.destroy();
   banner?.destroy();
+  screenWins?.closeAll();
+  globalShortcut.unregisterAll();
   void core?.stop();
 });
 app.on('activate', () => {

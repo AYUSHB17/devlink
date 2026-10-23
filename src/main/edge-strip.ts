@@ -29,6 +29,18 @@ export class EdgeStrips {
       this.scheduleHide();
       return { ok: true };
     });
+    // a link or browser tab URL dropped on the edge opens on the device on that side
+    ipcMain.handle('strip:links', (e, urls: unknown) => {
+      const peerId = this.peerOf.get(e.sender.id);
+      if (!peerId || !Array.isArray(urls)) return { ok: false, error: 'not a drop strip' };
+      try {
+        this.core.links.send(peerId, urls.slice(0, 50));
+      } catch (err: any) {
+        return { ok: false, error: err.message };
+      }
+      this.scheduleHide();
+      return { ok: true };
+    });
   }
 
   private targets(): { side: ScreenSide; peerId: string; name: string }[] {
